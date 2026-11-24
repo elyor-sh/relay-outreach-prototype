@@ -4,7 +4,7 @@ A zero-dependency, single-file prototype that still behaves like a product:
 a deterministic simulation engine, a tiny reactive view layer, bilingual
 UI, persistence, product analytics and automated tests.
 
-```
+```text
 src/
   engine.js            pure simulation: time model, protections, branching, projection
   data.js              demo audience, defaults, AI copywriter (templates), replies
@@ -19,10 +19,11 @@ src/
   index.template.html  shell with CSS/JS placeholders
 scripts/
   build.mjs            concatenates modules (dependency order) into index.html
-  e2e.mjs              Playwright end-to-end smoke test (17 checks)
+  e2e.mjs              Playwright end-to-end test (22 checks)
+  screenshots.mjs      curated README screenshots → docs/img/
   record-demo.mjs      scripted screen recording → demo/relay-demo.mp4
 tests/
-  engine.test.mjs      16 invariants of the engine
+  engine.test.mjs      24 engine invariants (incl. code-review regressions)
   data.test.mjs        demo data, AI drafts vs channel rules, import
   i18n.test.mjs        key parity, placeholders, plurals, no missing keys
 ```
@@ -34,7 +35,7 @@ would add a build chain and ~40–100 KB without adding capability here. The
 app needs exactly three things a framework provides — a single source of
 truth, declarative views and efficient DOM updates — and each is small:
 
-```
+```text
 state ──► App() view functions ──► HTML string ──► Morph ──► DOM
   ▲                                                    │
   └─── actions (data-action) / bindings (data-bind) ◄──┘

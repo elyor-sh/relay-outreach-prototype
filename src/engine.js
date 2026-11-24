@@ -120,8 +120,9 @@ const Engine = (() => {
   const hasLink = (text) => LINK_TEST.test(String(text || ''));
   const findLinks = (text) => String(text || '').match(new RegExp(LINK_SRC, 'gi')) || [];
   /** Remove links and tidy whitespace — used for the "no links in the first message" rule. */
+  // A short label right before the link ("Кейс: relay.app/case") goes with it.
   const stripLinks = (text) => String(text || '')
-    .replace(new RegExp(LINK_SRC, 'gi'), '')
+    .replace(new RegExp(`(?:[^\\s:]{1,24}:\\s*)?(?:${LINK_SRC})`, 'gi'), '')
     .replace(/[ \t]+([.,!?])/g, '$1')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/[ \t]+\n/g, '\n')

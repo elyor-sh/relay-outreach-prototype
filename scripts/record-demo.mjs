@@ -60,11 +60,11 @@ const OVERLAY_CSS = `
 #rec-ripple{position:fixed;z-index:2147483645;pointer-events:none;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;border:3px solid #8B5CF6;opacity:0}
 #rec-ripple.go{animation:recRipple .55s ease-out}
 @keyframes recRipple{from{transform:scale(.3);opacity:1}to{transform:scale(1.6);opacity:0}}
-#rec-cap{position:fixed;left:28px;bottom:26px;z-index:2147483640;pointer-events:none;max-width:780px;padding:16px 20px 15px;border-radius:18px;background:rgba(12,14,26,.86);color:#fff;backdrop-filter:blur(10px);box-shadow:0 24px 60px -20px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.08);font-family:Inter,system-ui,sans-serif;transform:translateY(20px);opacity:0;transition:all .45s cubic-bezier(.2,.8,.2,1)}
+#rec-cap{position:fixed;left:24px;bottom:22px;z-index:2147483640;pointer-events:none;max-width:640px;padding:13px 18px 12px;border-radius:18px;background:rgba(12,14,26,.86);color:#fff;backdrop-filter:blur(10px);box-shadow:0 24px 60px -20px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.08);font-family:Inter,system-ui,sans-serif;transform:translateY(20px);opacity:0;transition:all .45s cubic-bezier(.2,.8,.2,1)}
 #rec-cap.on{transform:none;opacity:1}
 #rec-cap .k{display:inline-block;margin-bottom:6px;padding:2px 9px;border-radius:999px;background:linear-gradient(135deg,#6366F1,#EC4899);font-size:12px;font-weight:800;letter-spacing:.04em}
-#rec-cap b{display:block;font-size:22px;line-height:1.2;letter-spacing:-.01em}
-#rec-cap p{margin:6px 0 0;font-size:15px;line-height:1.4;color:rgba(255,255,255,.82)}
+#rec-cap b{display:block;font-size:20px;line-height:1.2;letter-spacing:-.01em}
+#rec-cap p{margin:5px 0 0;font-size:14px;line-height:1.4;color:rgba(255,255,255,.82)}
 #rec-cap small{display:block;margin-top:6px;font-size:12px;color:rgba(255,255,255,.5);letter-spacing:.02em}
 #rec-card{position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:radial-gradient(900px 500px at 50% 40%,rgba(99,102,241,.45),transparent 70%),#070912;color:#fff;font-family:Inter,system-ui,sans-serif;text-align:center;transition:opacity .7s}
 #rec-card.off{opacity:0}
@@ -255,14 +255,14 @@ await card({
   subtitle: 'Мультиканальный аутрич · Простой и PRO-режим в одном окне',
   chips: ['7 каналов', 'запуск в 3 шага', 'защита на автопилоте', 'единые входящие'],
   footer: 'Clickable prototype · Product Analyst & Prototyper (AI-Driven)',
-}, 3600);
+}, 3200);
 await uncard();
 
 // ---------- Simple · step 1
 await caption('s1', 'ПРОСТОЙ · 1/3');
 await sleep(900);
 await click(tid('source-demo'), { after: 900 });
-await sleep(2600);
+await sleep(2100);
 await click(tid('wiz-next'), { after: 700 });
 
 // ---------- Simple · step 2 (voice → AI drafts)
@@ -272,7 +272,7 @@ await page.waitForFunction(() => !window.Relay.state.ui.voice, null, { timeout: 
 await sleep(500);
 await click(tid('generate'), { after: 200 });
 await tid('drafts').waitFor({ timeout: 10000 });
-await sleep(2600);
+await sleep(2100);
 await point(page.locator('[data-key="d-s3"]'), { ms: 700, scroll: false });
 await sleep(1200);
 await click(tid('wiz-next'), { after: 700 });
@@ -287,11 +287,11 @@ await click(page.locator('.sheet-foot .btn-primary'), { after: 500 });
 await caption('ap', 'АВТОПИЛОТ');
 await reveal(tid('autopilot'), 'center');
 await point(page.locator('.ap-card').nth(0), { fy: 0.3, ms: 700, scroll: false });
-await sleep(1500);
+await sleep(1300);
 await point(page.locator('.ap-card').nth(1), { fy: 0.3, ms: 600, scroll: false });
-await sleep(1500);
+await sleep(1300);
 await point(page.locator('.ap-card').nth(2), { fy: 0.3, ms: 600, scroll: false });
-await sleep(1500);
+await sleep(1200);
 
 // ---------- Launch → live
 await click(tid('launch'), { after: 200 });
@@ -299,11 +299,11 @@ await hideCaption();
 await sleep(2300);
 await caption('live1', 'МОНИТОРИНГ');
 await cursorTo(1180, 160, 700);
-await sleep(5200);
+await sleep(4600);
 await click(page.locator('.live-ctrls .seg button').nth(2), { after: 300 });
 await caption('live2', 'МОНИТОРИНГ');
 await cursorTo(640, 560, 900);
-await sleep(11500);
+await sleep(10600);
 
 // ---------- Inbox
 await caption('inbox', 'ВХОДЯЩИЕ');
@@ -321,7 +321,7 @@ await click(tid('send'), { after: 1300 });
 await caption('pro', 'PRO');
 await click(tid('mode-pro'), { after: 1600 });
 await click(tid('tab-builder'), { after: 900 });
-await click(page.locator('[data-testid="rules"] .panel-head'), { after: 2600 });
+await click(page.locator('[data-testid="rules"] .panel-head'), { after: 2300 });
 await click(page.locator('[data-testid="rules"] .panel-head'), { after: 500 });
 
 // Email
@@ -375,9 +375,9 @@ await caption('call', 'PRO · ЗВОНОК');
 await click(stepHead('s5'), { after: 700 });
 await click(tid('tab-s5-channel'), { after: 1000 });
 await point(page.locator('[data-testid="step-s5"] .cs-block').nth(1), { fy: 0.3, ms: 700 });
-await sleep(1100);
+await sleep(1000);
 await point(page.locator('[data-testid="step-s5"] .cs-block').nth(2), { fy: 0.3, ms: 700 });
-await sleep(1600);
+await sleep(1300);
 
 // PRO live
 await caption('plive', 'PRO · МОНИТОРИНГ');
@@ -397,7 +397,7 @@ await card({
   subtitle: 'Один HTML-файл · без зависимостей · работает офлайн',
   chips: ['детерминированный движок', 'RU / EN', 'unit + e2e тесты', 'продуктовая документация'],
   footer: 'index.html · README.md · docs/',
-}, 3800);
+}, 3400);
 
 await cdp.send('Page.stopScreencast');
 stamp(`captured ${frames.length} frames`);

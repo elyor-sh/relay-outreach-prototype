@@ -309,8 +309,10 @@ function condIssue(s) {
     return {
       level: 'warn', code: pixelOff ? 'pixel_off' : 'not_readable',
       text: pixelOff ? t('v.pixelOff', { r: stepNo(ref) }) : t('v.notReadable', { r: stepNo(ref) }),
+      // "Read" can be replaced by the robust "clicked" signal; "not read" has no click
+      // equivalent, so the honest fix there is turning the pixel back on.
       fix: pixelOff
-        ? (refClickable ? { arg: `cond-clicked:${s.id}`, label: t('fix.toClicked') } : { arg: 'pixel-on', label: t('fix.pixelOn') })
+        ? (s.condition === 'opened' && refClickable ? { arg: `cond-clicked:${s.id}`, label: t('fix.toClicked') } : { arg: 'pixel-on', label: t('fix.pixelOn') })
         : null,
     };
   }

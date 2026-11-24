@@ -273,4 +273,6 @@ test('link detection ignores e-mail addresses and dotted words', () => {
   assert.equal(Engine.hasLink('Relay.Company is great'), false);
   assert.equal(Engine.hasLink('see relay.app/case'), true);
   assert.equal(Engine.hasLink('https://x.y/z?c=1'), true);
+  assert.equal(Engine.stripLinks('Найдётся 15 минут? Кейс: relay.app/case'), 'Найдётся 15 минут?');
+  assert.equal(Engine.stripLinks('See https://relay.app/case now'), 'See now');
 });
