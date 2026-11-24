@@ -1191,7 +1191,7 @@ html[data-mode="pro"] .toast { background: #1A2232; border: 1px solid var(--bord
   <div id="app"></div>
   <noscript>Relay is an interactive prototype — please enable JavaScript.</noscript>
   <script>
-/*! Relay prototype · built 2026-11-24T17:07:15.816Z · sources: src/ (see README.md) */
+/*! Relay prototype · built 2026-11-24T17:13:39.315Z · sources: src/ (see README.md) */
 (() => {
 'use strict';
 /* ---- src/i18n.js ---- */
@@ -5097,15 +5097,17 @@ function feedItems(P, limit) {
     if (!FEED_TYPES.has(e.type)) continue;
     const key = `${e.type}|${e.channel}|${e.reason || ''}|${e.step || ''}`;
     const hit = FEED_GROUPABLE.has(e.type) && items.slice(-4).find((x) => x.key === key && x.t0 - e.t < 240);
-    if (hit) { hit.leads.push(e.lead); hit.t0 = e.t; continue; }
-    items.push({ key, e, t: e.t, t0: e.t, leads: [e.lead] });
+    if (hit) { hit.leads.push(e.lead); hit.t0 = e.t; hit.oldest = e.seq; continue; }
+    items.push({ key, e, t: e.t, t0: e.t, leads: [e.lead], oldest: e.seq });
   }
   return items;
 }
 
 function FeedItem(it) {
   const f = feedText(it);
-  return `<li class="${cls('fi', f.tone && `fi-${f.tone}`)}" data-key="f-${it.e.seq}">
+  // Keyed by the group's OLDEST event: new events joining a burst update the row in place
+  // instead of re-creating it (which would restart the entrance animation — visible flicker).
+  return `<li class="${cls('fi', f.tone && `fi-${f.tone}`)}" data-key="f-${it.oldest}">
     <span class="fi-ic" style="--c:${f.color || chColor(it.e.channel || 'messenger')}">${f.ic}</span>
     <div class="fi-main"><b>${f.title}</b>${f.sub ? `<small>${f.sub}</small>` : ''}</div>
     <time class="mono">${fmtHM(it.t, Engine.SENDER_TZ)}</time>

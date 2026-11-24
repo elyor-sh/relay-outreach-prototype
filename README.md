@@ -38,7 +38,7 @@
 * **Product analytics built in.** The tracking plan from `docs/PRODUCT.md` is
   implemented: events stream into a drawer (activity icon in the header) with
   time-to-launch, mode switches and PRO settings counters; export to JSON.
-* **Engineering hygiene.** 34 unit tests (engine invariants, AI drafts vs
+* **Engineering hygiene.** 37 unit tests (engine invariants, AI drafts vs
   channel rules, i18n parity) + a 22-check Playwright e2e run, RU/EN i18n,
   persistence, keyboard & screen-reader basics, `prefers-reduced-motion`,
   zero runtime dependencies.
@@ -113,7 +113,7 @@ builder afterwards never rewrites the history the inbox shows.
 ```bash
 npm install                 # playwright-core + ffmpeg-static (dev only)
 npm run build               # src/ → index.html (single file)
-npm test                    # 34 unit tests (node:test)
+npm test                    # 37 unit tests (node:test)
 npm run test:e2e            # 22-check end-to-end run in headless Chrome
 npm run screenshots         # docs/img/*.png
 npm run record              # demo/relay-demo.mp4 (≈ 2½ min, 1920×1080)
@@ -138,10 +138,13 @@ docs/                product notes, architecture, demo script, screenshots
 
 Built with an AI coding agent in one session: spec → engine first (tested in
 Node before any UI) → views → visual QA from automated screenshots → an
-**independent AI code review** (a separate reviewer agent; findings such as
-the un-frozen launch snapshot, PRO settings the engine ignored, and an SVG
-keyboard crash were fixed and covered by regression tests) → scripted demo
-recording from the real app. Tests caught a real product bug on the way:
+**two rounds of independent AI code review** (a separate read-only reviewer
+agent). Round 1 found e.g. an un-frozen launch snapshot, PRO settings the
+engine ignored, and an SVG keyboard crash; round 2 verified those fixes and
+caught regressions they introduced (subdomain links no longer detected,
+branch timing after a delayed step, substring stop-word matches). Every
+finding was fixed and pinned by a regression test → scripted demo recording
+from the real app. Tests caught a real product bug on the way:
 English SMS + a Cyrillic name switches to UCS-2 and would have blocked launch.
 
 ## Known limitations

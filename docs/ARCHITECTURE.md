@@ -23,7 +23,7 @@ scripts/
   screenshots.mjs      curated README screenshots → docs/img/
   record-demo.mjs      scripted screen recording → demo/relay-demo.mp4
 tests/
-  engine.test.mjs      24 engine invariants (incl. code-review regressions)
+  engine.test.mjs      27 engine invariants (incl. code-review regressions)
   data.test.mjs        demo data, AI drafts vs channel rules, import
   i18n.test.mjs        key parity, placeholders, plurals, no missing keys
 ```
@@ -77,9 +77,12 @@ they run.
 
 **Pipeline for each `step` job:**
 
-1. **Branching condition** — evaluated once at the nominal time against the
-   lead’s history of the referenced step (`opened`, `not_opened`,
-   `clicked`, `no_reply`). Not met → `skip` event.
+1. **Branching condition** — evaluated once against the lead’s history of
+   the referenced step (`opened`, `not_opened`, `clicked`, `no_reply`). If
+   the referenced step is still pending (throttled, weekend) the branch
+   waits for it, and in any case it is checked no earlier than *reference
+   send time + the configured day gap*, so every lead gets the same time to
+   open or click. Not met → `skip` event.
 2. **Working hours** — `inWindow(t, lead.tz, rules)`; outside → `deferred`
    (reason `night` / `weekend`) and re-queued at `nextWindow()` + jitter.
 3. **Channel resolution** — `messenger` steps walk the cascade
@@ -90,7 +93,8 @@ they run.
    per-mailbox daily cap with warm-up ramp and round-robin/health rotation,
    LinkedIn invites/messages per day, per-number caps for each messenger,
    SMS and call quotas. No token → `limit` event, re-queued to the next
-   day’s window.
+   day’s window. Quotas reset at UTC midnight (like most provider quotas);
+   reports and charts count days in the sender’s calendar.
 5. **Send** — messenger safety (link stripped from the first message in
    that channel, typing delay, voice/video note), then outcomes are drawn
    from the lead persona and channel factors. Email opens are only
@@ -103,7 +107,8 @@ they run.
 
 **Reply → auto-stop.** Any human reply (any channel, including a call)
 removes every pending `step`/`like` job of that lead from the queue and emits
-`auto_stop { cancelled }`. Stop words also emit `unsubscribe`. Out-of-office
+`auto_stop { cancelled }`. The reply text is matched (whole words, any
+channel) against the campaign stop words → `unsubscribe` + global block. Out-of-office
 auto-replies are recognised and do *not* stop the chain (configurable).
 
 **Outputs.** `simulate()` returns the sorted event list plus aggregates
