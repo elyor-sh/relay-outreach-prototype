@@ -8,7 +8,7 @@
 | Deliverable | File |
 |---|---|
 | **Prototype** — one self-contained HTML file (~400 KB, no dependencies, works offline) | [`index.html`](index.html) |
-| **Screen recording** — ≈ 2½ min, 1080p, both modes and the logic, RU UI with RU/EN captions | [`demo/relay-demo.mp4`](demo/relay-demo.mp4) |
+| **Screen recording** — 2 min 55 s, 1080p, both modes and the logic, RU UI with RU/EN captions | [`demo/relay-demo.mp4`](demo/relay-demo.mp4) |
 | Product notes — users, metrics, tracking plan, hypotheses | [`docs/PRODUCT.md`](docs/PRODUCT.md) |
 | Architecture — engine, rendering, testing | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | Demo script with timestamps | [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) |
@@ -116,7 +116,7 @@ npm run build               # src/ → index.html (single file)
 npm test                    # 37 unit tests (node:test)
 npm run test:e2e            # 22-check end-to-end run in headless Chrome
 npm run screenshots         # docs/img/*.png
-npm run record              # demo/relay-demo.mp4 (≈ 2½ min, 1920×1080)
+npm run record              # demo/relay-demo.mp4 (2:55, 1920×1080)
 npm run verify              # build + unit + e2e
 ```
 
