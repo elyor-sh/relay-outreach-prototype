@@ -90,6 +90,9 @@
    link cut from the first message.
 7. Header → **RU/EN**; activity icon → the product analytics stream.
 
+Want to try your own list? Drop [`docs/sample-leads.csv`](docs/sample-leads.csv)
+(8 contacts, 8 timezones, `;`-separated) on the *Upload a file* card.
+
 URL switches: `?lang=en` · `?mode=pro` · `?reset=1` (fresh state) ·
 `?voice=sim` (force scripted dictation) · `?fast=1` (skip animations).
 

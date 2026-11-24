@@ -32,6 +32,7 @@ function renderNow() {
   if (html === lastHtml) return; // nothing changed — skip parsing and diffing entirely
   lastHtml = html;
   Morph.morphInto(root, html);
+  syncDialog();
 }
 
 function bootstrap() {

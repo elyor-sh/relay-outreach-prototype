@@ -130,6 +130,8 @@ function GenProgress() {
   </div>`;
 }
 
+const LINK_RE_G = new RegExp(Engine.LINK_SRC, 'gi');
+
 /** Message text with {{variables}} filled in and highlighted. Input is escaped first. */
 function richPreview(text, lead, { stripLinks = false } = {}) {
   let src = String(text || '');
@@ -138,8 +140,8 @@ function richPreview(text, lead, { stripLinks = false } = {}) {
   const vars = { firstName: lead.firstName, company: lead.company, city, role: lead.role };
   return esc(src)
     .replace(/\{\{\s*(firstName|company|city|role)\s*\}\}/g, (_, k) => `<mark class="var">${esc(vars[k])}</mark>`)
-    // [^\s<] keeps a link from swallowing the <mark> of an adjacent variable.
-    .replace(/((?:https?:\/\/|www\.)[^\s<]+|(?<![@\w.-])[a-z0-9][a-z0-9-]*\.(?:com|io|ru|app|co|net|org|me|ai|dev)\b(?:\/[^\s<]*)?)/gi, '<u class="link">$1</u>')
+    // Same pattern the engine uses; [^\s<] keeps a link from swallowing an adjacent <mark>.
+    .replace(LINK_RE_G, '<u class="link">$&</u>')
     .replace(/\n/g, '<br>');
 }
 

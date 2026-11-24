@@ -275,4 +275,35 @@ test('link detection ignores e-mail addresses and dotted words', () => {
   assert.equal(Engine.hasLink('https://x.y/z?c=1'), true);
   assert.equal(Engine.stripLinks('Найдётся 15 минут? Кейс: relay.app/case'), 'Найдётся 15 минут?');
   assert.equal(Engine.stripLinks('See https://relay.app/case now'), 'See now');
+  assert.equal(Engine.stripLinks('Here is our case study: relay.app/x'), 'Here is our case study', 'mid-sentence words survive');
+});
+
+test('links with subdomains are detected (second review B1)', () => {
+  for (const s of ['docs.google.com/x', 'app.hubspot.com', 'go.relay.app/demo']) assert.equal(Engine.hasLink(s), true, s);
+  assert.equal(Engine.hasLink('a.b@x.io'), false);
+});
+
+test('after waiting for a delayed reference, the branch keeps the original day gap (B2)', () => {
+  // s3 (day 3, \"opened\" on s2) waits for LinkedIn invites throttled to 2/day.
+  const { r } = run((c) => {
+    c.channels.linkedin.inviteLimit = 2;
+    const s3 = c.steps.find((s) => s.id === 's3');
+    s3.condition = 'opened';
+    s3.ref = 's1';
+    c.steps.push({ id: 'sx', day: 4, channel: 'email', kind: 'message', tpl: 'email_followup', condition: 'not_opened', ref: 's2', sendAt: 'auto', subject: 'x', text: 'x' });
+  });
+  const invite = {};
+  for (const e of r.events) if (e.type === 'send' && e.step === 's2') invite[e.lead] = e.t;
+  const checks = r.events.filter((e) => e.step === 'sx' && (e.type === 'send' || e.type === 'skip') && invite[e.lead] != null);
+  assert.ok(checks.length > 0);
+  for (const e of checks) assert.ok(e.t - invite[e.lead] >= 2 * Engine.DAY - 60, `${e.lead}: checked ${((e.t - invite[e.lead]) / 60).toFixed(0)} h after the invite`);
+});
+
+test('stop words match whole words only (B5)', () => {
+  const c = clone(base);
+  c.channels.sms.stopWords = ['нет', 'no'];
+  const r = Engine.simulate(c, { seed: 42, replyText: () => 'Интернет-магазин? I know, not now' });
+  assert.equal(r.events.filter((e) => e.type === 'unsubscribe').length, 0);
+  const r2 = Engine.simulate(c, { seed: 42, replyText: () => 'Нет, спасибо' });
+  assert.ok(r2.events.filter((e) => e.type === 'unsubscribe').length > 0);
 });

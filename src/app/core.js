@@ -98,9 +98,16 @@ function loadState() {
  */
 function mergeCampaign(def, saved) {
   if (!saved) return def;
-  const channels = { ...def.channels };
-  for (const k of Object.keys(def.channels)) channels[k] = { ...def.channels[k], ...((saved.channels || {})[k] || {}) };
-  return { ...def, ...saved, rules: { ...def.rules, ...(saved.rules || {}) }, channels };
+  return deepMerge(def, saved);
+}
+
+/** Plain objects merge recursively; arrays and scalars from `saved` win as a whole. */
+function deepMerge(def, saved) {
+  const isObj = (x) => x && typeof x === 'object' && !Array.isArray(x);
+  if (!isObj(def) || !isObj(saved)) return saved === undefined ? def : saved;
+  const out = { ...def };
+  for (const [k, v] of Object.entries(saved)) out[k] = k in def ? deepMerge(def[k], v) : v;
+  return out;
 }
 
 const boot = loadState();

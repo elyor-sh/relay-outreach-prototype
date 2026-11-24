@@ -102,7 +102,7 @@ function EventsDrawer() {
   const ttl = launched && launched.props.time_to_launch_s != null ? `${Math.floor(launched.props.time_to_launch_s / 60)}:${pad2(launched.props.time_to_launch_s % 60)}` : '—';
   const proSettings = state.analytics.filter((e) => e.name === 'setting_changed' && e.props.mode === 'pro').length;
   return `<div class="drawer-backdrop" data-action="toggleDrawer"></div>
-  <aside class="drawer" role="dialog" aria-label="${t('an.title')}" data-testid="drawer">
+  <aside class="drawer" role="dialog" aria-modal="true" aria-label="${t('an.title')}" data-testid="drawer">
     <header class="drawer-head">
       <div><b>${icon('activity')} ${t('an.title')}</b><small>${t('an.sub')}</small></div>
       <button class="icon-btn" data-action="toggleDrawer" aria-label="${t('common.close')}">${icon('x')}</button>

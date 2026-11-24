@@ -115,14 +115,18 @@ const Engine = (() => {
 
   // A URL, or a bare domain with a known TLD. The look-behind keeps e-mail
   // addresses (alex@relay.io) and dotted words (Relay.Company) from matching.
-  const LINK_SRC = '(?:https?:\\/\\/|www\\.)[^\\s<]+|(?<![@\\w.-])[a-z0-9][a-z0-9-]*\\.(?:com|io|ru|app|co|net|org|me|ai|dev)\\b(?:\\/[^\\s<]*)?';
+  // Subdomains are allowed (docs.google.com, go.relay.app/demo): the match must start at
+  // the beginning of the host, which the look-behind enforces.
+  const LINK_SRC = '(?:https?:\\/\\/|www\\.)[^\\s<]+|(?<![@\\w.-])(?:[a-z0-9-]+\\.)*[a-z0-9][a-z0-9-]*\\.(?:com|io|ru|app|co|net|org|me|ai|dev)\\b(?:\\/[^\\s<]*)?';
   const LINK_TEST = new RegExp(LINK_SRC, 'i');
   const hasLink = (text) => LINK_TEST.test(String(text || ''));
   const findLinks = (text) => String(text || '').match(new RegExp(LINK_SRC, 'gi')) || [];
   /** Remove links and tidy whitespace — used for the "no links in the first message" rule. */
-  // A short label right before the link ("Кейс: relay.app/case") goes with it.
+  // A one-word label that opens a sentence ("…? Кейс: relay.app/case") goes with the link;
+  // mid-sentence words stay ("our case study: link" → "our case study").
   const stripLinks = (text) => String(text || '')
-    .replace(new RegExp(`(?:[^\\s:]{1,24}:\\s*)?(?:${LINK_SRC})`, 'gi'), '')
+    .replace(new RegExp(`(^|[.!?]\\s+)[^\\s:.!?]{1,24}:\\s*(?=${LINK_SRC})`, 'gim'), '$1')
+    .replace(new RegExp(`:?\\s*(?:${LINK_SRC})`, 'gi'), '')
     .replace(/[ \t]+([.,!?])/g, '$1')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/[ \t]+\n/g, '\n')
@@ -211,6 +215,7 @@ const Engine = (() => {
       .sort((a, b) => a.day - b.day || a._i - b._i);
     const startT = opts.startT ?? LAUNCH_T;
     const startDay = Math.floor(startT / DAY);
+    const STEP_BY_ID = Object.fromEntries(steps.map((s) => [s.id, s]));
 
     const events = [];
     let seq = 0;
@@ -393,8 +398,15 @@ const Engine = (() => {
     function onStep(job, st) {
       const { lead, step } = job;
 
-      // 1) Branching condition — evaluated once, at the nominal time of the step.
+      // 1) Branching condition — evaluated once. If the referenced step was itself delayed
+      //    (limits, weekend), wait for it and then keep the original day gap, so the lead
+      //    has the same time to open / click as everyone else.
       const resolve = () => st.pending.delete(step.id);
+      if (!job.checked && step.condition !== 'no_reply' && st.hist[step.ref]) {
+        const ref = STEP_BY_ID[step.ref];
+        const due = st.hist[step.ref].t + Math.max(1, step.day - ref.day) * DAY;
+        if (job.t < due - 60) { push({ ...job, t: due }); return; } // 1 h tolerance avoids churn
+      }
       if (!job.checked) {
         const verdict = checkCondition(step, st);
         // Re-check twice a day for up to 3 weeks (the campaign horizon), then give up.
@@ -459,7 +471,7 @@ const Engine = (() => {
       }
       if (tried) emit(job.t, lead, 'cascade', { step: step.id, channel, tried });
       if (res.rotatedFrom) emit(job.t, lead, 'rotation', { step: step.id, channel, from: res.rotatedFrom, to: res.label });
-      st.touches++;
+      if (!job.retry) st.touches++; // a call retry is the same touch
       resolve();
       const offHours = !inWindow(job.t, lead.tz, rules); // only possible when tz-by-code is off
 
@@ -564,8 +576,10 @@ const Engine = (() => {
       const words = (CH.sms.stopWords || []).map((w) => String(w).trim().toLowerCase()).filter(Boolean);
       if (!words.length || channel === 'call') return null;
       if (!opts.replyText) return intent === 'stop' ? words[0] : null; // headless callers without texts
-      const text = String(opts.replyText(intent, variant, channel) || '').toLowerCase();
-      return words.find((w) => text.includes(w)) || null;
+      const text = String(opts.replyText(intent, variant, channel) || '');
+      // Whole words only: "нет" must not fire on "интернет", "no" not on "know".
+      const esc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return words.find((w) => new RegExp(`(^|[^\\p{L}\\p{N}])${esc(w)}(?=$|[^\\p{L}\\p{N}])`, 'iu').test(text)) || null;
     }
 
     function stopLead(t, lead, st, reason, channel) {
@@ -757,7 +771,7 @@ const Engine = (() => {
   }
 
   return {
-    DAY, SENDER_TZ, LAUNCH_T, STAGGER, MESSENGERS, CASCADE_DEFAULT, LIGHT,
+    DAY, SENDER_TZ, LAUNCH_T, STAGGER, MESSENGERS, CASCADE_DEFAULT, LIGHT, LINK_SRC,
     mulberry32, tzFromPhone, smsInfo, hasLink, findLinks, stripLinks,
     localInfo, inWindow, nextWindow, emailCap, conditionSupport, isFirstMessengerStep,
     simulate, project, upperBound,

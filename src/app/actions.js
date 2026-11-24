@@ -320,8 +320,13 @@ function openDialog(sel) {
   dialogOpener = document.activeElement;
   dialogSel = sel;
   const box = document.querySelector(sel);
-  const first = box && box.querySelector('button, [href], input, select, textarea');
+  const first = box && box.querySelector('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled)');
   if (first) first.focus();
+}
+
+/** Called after every render: a dialog closed by state (launch, mode switch, removal) releases focus. */
+function syncDialog() {
+  if (dialogSel && !document.querySelector(dialogSel)) closeDialog();
 }
 function closeDialog() {
   dialogSel = null;
@@ -677,10 +682,11 @@ function tick(now) {
     track('sim_completed', { replies: liveProj().metrics.replied });
     persistSoon();
   }
-  // Off the Live screen only the header badge / inbox change — repaint just when replies arrive.
+  // Repaint budget per screen: Live ~12 fps, Inbox ~2 fps (lead clocks, call/meeting lines),
+  // Builder only when a reply changes the header badge.
   const replies = liveProj().metrics.replied;
-  const needed = state.ui.view === 'live' || finished || replies !== lastReplies;
-  if (needed && (finished || now - lastPaint > 80)) {
+  const interval = state.ui.view === 'live' ? 80 : state.ui.view === 'inbox' ? 450 : Infinity;
+  if (finished || replies !== lastReplies || now - lastPaint > interval) {
     lastPaint = now;
     announceReplies();
     render();
