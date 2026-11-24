@@ -13,7 +13,9 @@
 | Architecture — engine, rendering, testing | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | Demo script with timestamps | [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) |
 
-**Open it:** double-click `index.html` (Chrome / Edge / Safari / Firefox). Nothing to install.
+**▶ Live demo:** **https://elyor-sh.github.io/relay-outreach-prototype/** — served over https, so voice input works with a real microphone in Chrome/Edge.
+
+**Or open it locally:** double-click `index.html` (Chrome / Edge / Safari / Firefox). Nothing to install.
 
 ![Simple mode — the track and the autopilot](docs/img/03-simple-track.png)
 
