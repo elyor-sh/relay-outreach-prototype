@@ -75,11 +75,14 @@ function loadState() {
     if (saved.v !== fresh.v) return { state: fresh, restored: false };
     const ui = { ...fresh.ui, ...saved.ui, inbox: { ...fresh.ui.inbox, ...(saved.ui || {}).inbox } };
     for (const k of TRANSIENT_UI) ui[k] = fresh.ui[k];
+    const savedLang = ui.lang;
     if (params.get('lang')) ui.lang = lang;
     return {
       restored: true,
+      langChanged: savedLang !== ui.lang ? savedLang : null,
       state: {
         ...fresh, ...saved, ui,
+        campaign: mergeCampaign(fresh.campaign, saved.campaign),
         sim: { ...fresh.sim, ...saved.sim, playing: false },
         session: { ...fresh.session, startedAt: Date.now() },
       },
@@ -87,6 +90,17 @@ function loadState() {
   } catch (_) {
     return { state: fresh, restored: false };
   }
+}
+
+/**
+ * Saved campaigns are merged over current defaults, so settings added in a
+ * newer build (new channel knobs, rules) get sane values instead of `undefined`.
+ */
+function mergeCampaign(def, saved) {
+  if (!saved) return def;
+  const channels = { ...def.channels };
+  for (const k of Object.keys(def.channels)) channels[k] = { ...def.channels[k], ...((saved.channels || {})[k] || {}) };
+  return { ...def, ...saved, rules: { ...def.rules, ...(saved.rules || {}) }, channels };
 }
 
 const boot = loadState();
@@ -117,15 +131,22 @@ function memoize(key, deps, fn) {
 function bump() { rev++; persistSoon(); }
 
 /** Dry-run of the current settings — powers the PRO forecast and the Simple launch bar. */
-const forecast = () => memoize('forecast', `${rev}:${state.sim.seed}`, () => Engine.simulate(state.campaign, { seed: state.sim.seed }));
+/** Engine options shared by the forecast and the live run: inbound texts feed stop-word matching. */
+const simOpts = (seed) => ({ seed, replyText: Data.replyTextAll });
+const forecast = () => memoize('forecast', `${rev}:${state.sim.seed}`, () => Engine.simulate(state.campaign, simOpts(state.sim.seed)));
 
 let liveRes = null;
 let liveResId = -1;
-/** Frozen timeline of the launched campaign (recomputed lazily after a reload). */
+/**
+ * Frozen timeline of the launched campaign. The snapshot (campaign + seed) is
+ * immutable after launch, so re-simulating it after a reload reproduces the
+ * exact same history the inbox state refers to.
+ */
 function liveResult() {
   if (!state.sim.launched || !state.sim.snapshot) return null;
   if (!liveRes || liveResId !== state.sim.launchId) {
-    liveRes = Engine.simulate(state.sim.snapshot, { seed: state.sim.seed });
+    const snap = state.sim.snapshot;
+    liveRes = Engine.simulate(snap, simOpts(snap.seed ?? state.sim.seed));
     liveResId = state.sim.launchId;
   }
   return liveRes;
@@ -221,10 +242,11 @@ function stepNoun(s) {
   return t('noun.messenger');
 }
 
-function condPlain(s) {
-  if (stepIndex(s.id) === 0) return t('cond.plain.first');
+/** @param list the step list the condition lives in (current campaign or the launched snapshot). */
+function condPlain(s, list = steps()) {
+  if (list.findIndex((x) => x.id === s.id) === 0) return t('cond.plain.first');
   if (s.condition === 'no_reply' || !s.ref) return t('cond.plain.no_reply');
-  return t(`cond.plain.${s.condition}`, { what: stepNoun(stepById(s.ref)) });
+  return t(`cond.plain.${s.condition}`, { what: stepNoun(list.find((x) => x.id === s.ref)) });
 }
 
 const PLACEHOLDER_LEAD = { id: 'P', firstName: 'Анна', name: 'Анна Смирнова', company: 'ЛогиТех', city: 'moscow', role: 'CEO', tz: 3, has: {} };
@@ -351,6 +373,9 @@ function preflight() {
       if (!C[m].typing) out.push({ level: 'warn', text: t('pf.noTyping', { ch: chName(m) }), fix: { arg: `typing-on:${m}`, label: t('fix.typing') } });
     }
     if (usesChannel('call') && !C.call.amd) out.push({ level: 'warn', text: t('pf.noAmd'), fix: { arg: 'amd-on', label: t('fix.amd') } });
+    if ((usesChannel('sms') || usesChannel('call')) && !C.sms.tzByCode) {
+      out.push({ level: 'warn', text: t('pf.noTzCode', { n: forecast().stats.offHours }), fix: { arg: 'tz-on', label: t('fix.tzOn') } });
+    }
     out.push({ level: 'ok', text: t('pf.ok.stop') });
     out.push({ level: 'ok', text: t('pf.ok.hours', { a: c.rules.workStart, b: c.rules.workEnd }) });
     if (steps().some((s) => s.channel === 'messenger')) out.push({ level: 'ok', text: t('pf.ok.cascade', { list: c.rules.cascade.filter((x) => x.on).map((x) => chName(x.id)).join(' → ') }) });
@@ -386,6 +411,7 @@ function riskScore() {
       if (C[m].dailyPerNumber > SAFE_PER_NUMBER[m]) s += 9;
     }
     if (usesChannel('call') && !C.call.amd) s += 3;
+    if ((usesChannel('sms') || usesChannel('call')) && !C.sms.tzByCode) s += 8; // night SMS → complaints
     const score = clamp(Math.round(s), 0, 100);
     return { score, level: score < 30 ? 'low' : score < 60 ? 'mid' : 'high' };
   });

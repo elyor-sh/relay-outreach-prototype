@@ -149,7 +149,7 @@ function ThreadMsg(it, lead) {
     case 'bounce':
       return sysLine('alert', `${t('feed.bounce', { name })} — ${t('feed.bounce.sub')}`, 'bad');
     case 'unsubscribe':
-      return sysLine('ban', t('feed.unsub.sub'), 'bad');
+      return sysLine('ban', t('feed.unsub.sub', { w: esc(e.word || '') }), 'bad');
     case 'no_channel':
       return sysLine('phone-off', t('feed.nochannel.sub'));
     default:

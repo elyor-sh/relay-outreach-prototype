@@ -131,6 +131,47 @@ try {
   await tid('live-leads').click();
   await snap('18-live-pro-leads');
 
+  /* ---------------- review regressions ---------------- */
+  const fp = () => page.evaluate(() => { const r = window.Relay.liveResult(); return `${r.events.length}:${r.stats.humanReplies}:${r.events.slice(-5).map((e) => e.type + e.t).join()}`; });
+  const before = await fp();
+  await tid('tab-builder').click();
+  await page.locator('[data-testid="rules"] .panel-head').click();
+  await page.locator('[data-bind="sim.seed"]').fill('7');
+  await page.locator('label.tgl', { has: page.locator('[data-bind="campaign.channels.sms.tzByCode"]') }).click();
+  await page.waitForTimeout(150);
+  check('tz-by-code off → preflight warning', (await page.locator('.risk .chk.warn', { hasText: /UTC|отправителя|sender/ }).count()) > 0);
+  await page.locator('label.tgl', { has: page.locator('[data-bind="campaign.channels.sms.tzByCode"]') }).click();
+  await page.locator('.lm-node').nth(1).focus();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(150);
+  check('logic-map node opens from the keyboard', (await page.locator('[data-testid="step-s2"].is-open').count()) === 1);
+  await page.locator('[data-testid="step-s6"] .step-head').click();
+  await tid('tab-s6-channel').click();
+  const sw = page.locator('[data-bind="ui.newStopWord"]');
+  await sw.fill('хватит');
+  await sw.press('Enter');
+  await page.waitForTimeout(100);
+  check('stop-word field clears after Enter while focused', (await sw.inputValue()) === '' && (await S()).campaign.channels.sms.stopWords.includes('хватит'));
+  await page.waitForTimeout(600);
+  await page.goto(url.replace('reset=1&', '')); // same session, storage kept
+  await page.waitForSelector('#app header');
+  check('launched campaign is frozen across seed change + reload', (await fp()) === before);
+  const morph = await page.evaluate(() => {
+    const { Morph } = window.Relay;
+    const box = document.createElement('div');
+    document.body.appendChild(box);
+    Morph.morphInto(box, '<ul><li data-key="a">A</li><li data-key="b">B</li></ul><input id="mi" value="x">');
+    const a = box.querySelector('[data-key="a"]');
+    const inp = box.querySelector('#mi');
+    inp.focus();
+    inp.value = 'typed';
+    Morph.morphInto(box, '<ul><li data-key="b">B</li><li data-key="a">A2</li></ul><input id="mi" value="server">');
+    const ok = box.querySelector('[data-key="a"]') === a && a.textContent === 'A2' && box.querySelector('li').dataset.key === 'b' && inp.value === 'typed';
+    box.remove();
+    return ok;
+  });
+  check('morph: keyed nodes move with identity, focused input keeps typed value', morph);
+
   /* ---------------- i18n ---------------- */
   await tid('lang').click();
   await page.waitForTimeout(200);

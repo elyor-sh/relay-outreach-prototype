@@ -297,8 +297,8 @@ const Data = (() => {
       leads: [], goal: '', tone: 'friendly', messagesReady: false, textsCustom: false,
       steps: defaultSteps(),
       rules: {
-        workStart: 9, workEnd: 19, skipWeekends: true, tzSource: 'phone',
-        stopOnMeeting: true, bounceFallback: true, ignoreAutoReply: true,
+        workStart: 9, workEnd: 19, skipWeekends: true,
+        bounceFallback: true, ignoreAutoReply: true,
         cascade: Engine.CASCADE_DEFAULT.map((id) => ({ id, on: true })),
       },
       channels: defaultChannels(),
@@ -447,11 +447,12 @@ const Data = (() => {
   function personalize(text, lead, lang) {
     if (!lead) return text || '';
     const city = CITIES[lead.city] ? L(CITIES[lead.city].name, lang) : '';
+    // Function replacers: names like "A$&B" must never be treated as replacement patterns.
     return String(text || '')
-      .replace(/\{\{\s*firstName\s*\}\}/g, lead.firstName)
-      .replace(/\{\{\s*company\s*\}\}/g, lead.company)
-      .replace(/\{\{\s*city\s*\}\}/g, city)
-      .replace(/\{\{\s*role\s*\}\}/g, lead.role);
+      .replace(/\{\{\s*firstName\s*\}\}/g, () => lead.firstName)
+      .replace(/\{\{\s*company\s*\}\}/g, () => lead.company)
+      .replace(/\{\{\s*city\s*\}\}/g, () => city)
+      .replace(/\{\{\s*role\s*\}\}/g, () => lead.role);
   }
 
   /* ------------------------------------------------------------------ */
@@ -500,7 +501,17 @@ const Data = (() => {
     stop: { label: ['Стоп-слово — отписан', 'Stop word — unsubscribed'], summary: ['Автоматически отписан во всех каналах и добавлен в стоп-лист.', 'Automatically unsubscribed from every channel and added to the block list.'], reply: ['Вы отписаны. Извините за беспокойство.', 'You’re unsubscribed. Sorry for the trouble.'] },
   };
 
+  /**
+   * Inbound reply text in both languages — handed to the engine so stop words are
+   * matched against what the person actually wrote, independent of the UI language.
+   */
+  function replyTextAll(intent, variant) {
+    const pool = REPLIES[intent] || REPLIES.question;
+    return pool[(variant || 0) % pool.length].join(' \n ');
+  }
+
   return {
+    replyTextAll,
     L, CHANNELS, CITIES, REACH, CALLER_IDS, MANAGERS, VOICES, QUICK_GOALS, VOICE_SAMPLE, SENDER,
     REPLIES, CALL_SUMMARY, INSIGHT, TPL_FOR_CHANNEL,
     demoLeads, makeLead, parseCSV, parseList, coverage, defaultCampaign, defaultSteps, defaultChannels,

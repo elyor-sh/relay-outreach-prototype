@@ -138,7 +138,8 @@ function richPreview(text, lead, { stripLinks = false } = {}) {
   const vars = { firstName: lead.firstName, company: lead.company, city, role: lead.role };
   return esc(src)
     .replace(/\{\{\s*(firstName|company|city|role)\s*\}\}/g, (_, k) => `<mark class="var">${esc(vars[k])}</mark>`)
-    .replace(/((?:https?:\/\/|www\.)\S+|\b[a-z0-9][a-z0-9-]*\.(?:com|io|ru|app|co|net|org|me|ai|dev)(?:\/\S*)?)/gi, '<u class="link">$1</u>')
+    // [^\s<] keeps a link from swallowing the <mark> of an adjacent variable.
+    .replace(/((?:https?:\/\/|www\.)[^\s<]+|(?<![@\w.-])[a-z0-9][a-z0-9-]*\.(?:com|io|ru|app|co|net|org|me|ai|dev)\b(?:\/[^\s<]*)?)/gi, '<u class="link">$1</u>')
     .replace(/\n/g, '<br>');
 }
 
@@ -176,7 +177,8 @@ function WizTrack() {
 }
 
 /** The visual "track": a day ruler with step bubbles placed on their day. Shared by builder and live views. */
-function Track({ live, proj, list = sortedForView() }) {
+/** In live mode `list`/`rules` come from the launched snapshot, never from the editable campaign. */
+function Track({ live, proj, list = sortedForView(), rules = state.campaign.rules }) {
   const days = Math.max(8, Math.max(1, ...list.map((s) => s.day)) + 1);
   const rowOf = {};
   const perDay = {};
@@ -190,7 +192,7 @@ function Track({ live, proj, list = sortedForView() }) {
   }).join('')}</div>
     <div class="track-lane">
       <div class="track-line" aria-hidden="true"><i style="width:${progress * 100}%"></i></div>
-      ${list.map((s) => TrackNode(s, rowOf[s.id], live, proj)).join('')}
+      ${list.map((s) => TrackNode(s, rowOf[s.id], live, proj, list, rules)).join('')}
       ${live ? '' : `<div class="tnode tnode-ghost" data-key="n-ghost" style="grid-column:${Math.min(days, Math.max(...list.map((s) => s.day)) + 1)};grid-row:1">
         <button class="tnode-bubble" data-action="toggleAddMenu" data-testid="add-step" aria-expanded="${state.ui.addMenu}" aria-label="${t('track.add')}">${icon('plus')}</button>
         <div class="tnode-title">${t('track.add')}</div></div>`}
@@ -198,16 +200,16 @@ function Track({ live, proj, list = sortedForView() }) {
   </div>`;
 }
 
-function TrackNode(s, row, live, proj) {
+function TrackNode(s, row, live, proj, list, rules) {
   const sent = live && proj ? (proj.stepStats[s.id] || { sent: 0 }).sent : 0;
-  const shifted = isWeekendDay(s.day) && state.campaign.rules.skipWeekends;
+  const shifted = isWeekendDay(s.day) && rules.skipWeekends;
   return `<div class="${cls('tnode', live && sent > 0 && 'is-hit')}" data-key="n-${s.id}" style="grid-column:${s.day};grid-row:${row};--c:${chColor(s.channel)}">
     <button class="tnode-bubble" ${live ? 'tabindex="-1"' : `data-action="openStep" data-arg="${s.id}"`} aria-label="${esc(stepTitle(s))}" data-testid="node-${s.id}">
-      ${chIcon(s.channel)}${s.channel === 'messenger' ? `<span class="tnode-cascade" aria-hidden="true">${state.campaign.rules.cascade.filter((c) => c.on).map((c) => `<i style="--c:${chColor(c.id)}"></i>`).join('')}</span>` : ''}
+      ${chIcon(s.channel)}${s.channel === 'messenger' ? `<span class="tnode-cascade" aria-hidden="true">${rules.cascade.filter((c) => c.on).map((c) => `<i style="--c:${chColor(c.id)}"></i>`).join('')}</span>` : ''}
       ${live && sent ? `<span class="tnode-count mono">${sent}</span>` : ''}
     </button>
     <div class="tnode-title">${stepTitle(s)}</div>
-    <div class="tnode-cond">${condPlain(s)}</div>
+    <div class="tnode-cond">${condPlain(s, list)}</div>
     ${shifted ? `<div class="tnode-shift">${icon('moon')} ${t('track.shift')}</div>` : ''}
   </div>`;
 }

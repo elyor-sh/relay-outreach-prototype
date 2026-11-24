@@ -75,7 +75,7 @@ function LiveSimple(P) {
     </section>
     <section class="panel track-panel">
       <header class="panel-head"><span class="ph-ic">${icon('route')}</span><div class="ph-text"><b>${t('live.track')}</b><small>${t('live.track.sub')}</small></div></header>
-      ${Track({ live: true, proj: P, list: snapSteps() })}
+      ${Track({ live: true, proj: P, list: snapSteps(), rules: state.sim.snapshot.rules })}
     </section>`;
 }
 
@@ -186,7 +186,7 @@ function feedText(it) {
     case 'meeting':
       return { ic: icon('calendar'), color: G, tone: 'green', title: t('feed.meeting', { name }), sub: t('feed.meeting.sub') };
     case 'unsubscribe':
-      return { ic: icon('ban'), color: R, title: t('feed.unsub', { name, a: gA(lead) }), sub: t('feed.unsub.sub') };
+      return { ic: icon('ban'), color: R, title: t('feed.unsub', { name, a: gA(lead) }), sub: t('feed.unsub.sub', { w: esc(e.word || '') }) };
     case 'rotation':
       return { ic: icon('inbox'), color: chColor('email'), title: t('feed.rotation', { from: esc(e.from) }), sub: t('feed.rotation.sub', { to: esc(e.to) }) };
     case 'no_channel':
@@ -254,7 +254,7 @@ function LeadsTable(P) {
     const st = leadStatus(l, P);
     const p = clockParts(T, l.tz);
     const awake = Engine.inWindow(T, l.tz, state.sim.snapshot.rules);
-    return `<tr data-key="lr-${l.id}" class="${cls(light && 'is-replied')}" data-action="focusLead" data-arg="${l.id}">
+    return `<tr data-key="lr-${l.id}" class="${cls(light && 'is-replied')}" data-action="focusLead" data-arg="${l.id}" tabindex="0" aria-label="${esc(l.name)}">
         <td>${LightDot(light)}</td>
         <td><div class="lt-lead">${Avatar(l, 'sm')}<div><b>${esc(l.name)}</b><small>${esc(l.company)}</small></div></div></td>
         <td class="mono"><span class="${cls('lt-time', awake ? 'day' : 'night')}">${icon(awake ? 'sun' : 'moon')} ${pad2(p.hh)}:${pad2(p.mm)}</span> <small>${esc(cityName(l.city))}</small></td>

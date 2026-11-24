@@ -91,14 +91,13 @@ function RulesPanel() {
         <h4>${icon('clock')} ${t('rules.hours')}</h4>
         <div class="row"><label>${t('rules.from')}</label>${Select('campaign.rules.workStart', r.workStart, hours(6, 12), 'data-num')}<label>${t('rules.to')}</label>${Select('campaign.rules.workEnd', r.workEnd, hours(15, 22), 'data-num')}</div>
         ${Toggle('campaign.rules.skipWeekends', r.skipWeekends, t('rules.weekends'), t('rules.weekends.hint'))}
-        <div class="row"><label>${t('rules.tzsrc')}</label>${Select('campaign.rules.tzSource', r.tzSource, [{ v: 'phone', label: t('rules.tz.phone') }, { v: 'crm', label: t('rules.tz.crm') }])}</div>
+        ${Toggle('campaign.channels.sms.tzByCode', state.campaign.channels.sms.tzByCode, t('rules.tzcode'), t('rules.tzcode.hint'))}
         ${HoursViz()}
       </div>
       <div class="rcol">
         <h4>${icon('stop')} ${t('rules.autostop')}</h4>
         ${Toggle(null, true, t('rules.stop.reply'), t('rules.stop.reply.hint'), { locked: true })}
         ${Toggle(null, true, t('rules.stop.unsub'), t('rules.stop.unsub.hint'), { locked: true })}
-        ${Toggle('campaign.rules.stopOnMeeting', r.stopOnMeeting, t('rules.stop.meeting'))}
         ${Toggle('campaign.rules.bounceFallback', r.bounceFallback, t('rules.stop.bounce'), t('rules.stop.bounce.hint'))}
         ${Toggle('campaign.rules.ignoreAutoReply', r.ignoreAutoReply, t('rules.stop.ooo'), t('rules.stop.ooo.hint'))}
       </div>
@@ -430,7 +429,7 @@ function SmsSettings(s) {
     g.n++;
     groups.set(code, g);
   }
-  const probeOut = probe
+  const probeOut = !sms.tzByCode ? `<div class="probe bad">${t('sms.tz.off')}</div>` : probe
     ? (() => {
       const ok = Engine.inWindow(Engine.LAUNCH_T, probe.tz, state.campaign.rules);
       const next = Engine.nextWindow(Engine.LAUNCH_T, probe.tz, state.campaign.rules);

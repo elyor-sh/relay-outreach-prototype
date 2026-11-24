@@ -1191,7 +1191,7 @@ html[data-mode="pro"] .toast { background: #1A2232; border: 1px solid var(--bord
   <div id="app"></div>
   <noscript>Relay is an interactive prototype — please enable JavaScript.</noscript>
   <script>
-/*! Relay prototype · built 2026-11-24T16:35:24.282Z · sources: src/ (see README.md) */
+/*! Relay prototype · built 2026-11-24T16:52:27.624Z · sources: src/ (see README.md) */
 (() => {
 'use strict';
 /* ---- src/i18n.js ---- */
@@ -1344,6 +1344,9 @@ const I18N = {
   'pf.noMailbox': ['Нет ни одного включённого ящика', 'No mailbox is enabled'],
   'pf.msgLimit': ['{ch}: {n} сообщений на номер в день — безопасно до {safe}', '{ch}: {n} messages per number a day — safe up to {safe}'],
   'pf.noTyping': ['{ch}: без имитации печатания сообщения выглядят как бот', '{ch}: without typing simulation messages look like a bot'],
+  'pf.noTzCode': ['SMS и звонки по времени отправителя — {n} отправок попадут на ночь получателя', 'SMS & calls on sender time — {n} sends land in the recipient’s night'],
+  'fix.tzOn': ['Пояс по коду номера', 'Use phone-code timezone'],
+  'sms.tz.off': ['Выключено: SMS и звонки идут по московскому времени', 'Off: SMS and calls follow Moscow time'],
   'pf.noAmd': ['Звонки без распознавания автоответчика — ИИ будет говорить с голосовой почтой', 'Calls without voicemail detection — AI will talk to answering machines'],
   'pf.ok.stop': ['Ответ в любом канале остановит всю цепочку', 'A reply in any channel stops the whole chain'],
   'pf.ok.hours': ['Отправка только {a}:00–{b}:00 по времени получателя', 'Sending only {a}:00–{b}:00 in the recipient’s time'],
@@ -1499,16 +1502,14 @@ const I18N = {
   'rules.to': ['до', 'to'],
   'rules.weekends': ['Не писать в выходные', 'Skip weekends'],
   'rules.weekends.hint': ['Сб и Вс по местному времени → перенос на Пн', 'Sat & Sun local time → moved to Monday'],
-  'rules.tzsrc': ['Часовой пояс', 'Timezone source'],
-  'rules.tz.phone': ['по коду номера', 'phone code'],
-  'rules.tz.crm': ['из поля CRM «город»', 'CRM “city” field'],
+  'rules.tzcode': ['SMS и звонки — по поясу из кода номера', 'SMS & calls use the phone-code timezone'],
+  'rules.tzcode.hint': ['выключите — и SMS уйдут по московскому времени (увидите ночные отправки в прогнозе)', 'turn off and SMS follow Moscow time (night sends show up in the forecast)'],
   'rules.hv.hint': ['Где сейчас аудитория в момент запуска (Пн 10:00 МСК). Всё вне окна отложится.', 'Where the audience is at launch (Mon 10:00 MSK). Everything outside the window is deferred.'],
   'rules.autostop': ['Автоостановка цепочки', 'Chain auto-stop'],
   'rules.stop.reply': ['Ответ в любом канале', 'Reply in any channel'],
   'rules.stop.reply.hint': ['отменяет все будущие шаги во всех каналах', 'cancels every future step in every channel'],
   'rules.stop.unsub': ['Стоп-слово / отписка', 'Stop word / unsubscribe'],
   'rules.stop.unsub.hint': ['глобальный стоп-лист', 'global block list'],
-  'rules.stop.meeting': ['Встреча назначена в календаре', 'Meeting booked in calendar'],
   'rules.stop.bounce': ['Bounce → продолжить в других каналах', 'Bounce → continue in other channels'],
   'rules.stop.bounce.hint': ['иначе вся цепочка остановится', 'otherwise the chain stops'],
   'rules.stop.ooo': ['Автоответ «в отпуске» — не считать ответом', 'Out-of-office is not a reply'],
@@ -1771,7 +1772,7 @@ const I18N = {
   'feed.meeting': ['Встреча с {name} в календаре', 'Meeting with {name} booked'],
   'feed.meeting.sub': ['слот согласован прямо в разговоре', 'slot agreed right in the call'],
   'feed.unsub': ['{name} попросил{a} не писать', '{name} asked not to be contacted'],
-  'feed.unsub.sub': ['Стоп-слово → отписали во всех каналах', 'Stop word → unsubscribed in every channel'],
+  'feed.unsub.sub': ['Стоп-слово «{w}» → отписали во всех каналах', 'Stop word “{w}” → unsubscribed in every channel'],
   'feed.rotation': ['Ящик {from} исчерпал дневной лимит', 'Mailbox {from} hit its daily cap'],
   'feed.rotation.sub': ['переключились на {to}', 'switched to {to}'],
   'feed.nochannel': ['{name}: нет ни одного мессенджера', '{name}: no messenger at all'],
@@ -2096,6 +2097,9 @@ const Engine = (() => {
   const MESSENGERS = ['whatsapp', 'telegram', 'signal'];
   const CASCADE_DEFAULT = ['whatsapp', 'telegram', 'signal', 'sms'];
 
+  /** Typing-simulation delay multipliers. */
+  const TYPING_SPEED = { slow: 1.6, human: 1, fast: 0.5 };
+
   /** Relative likelihood that a message gets read, per channel. */
   const READ_FACTOR = { email: 1, linkedin: 0.9, whatsapp: 1.25, telegram: 1.2, signal: 1.2, sms: 1.1 };
   /** Relative likelihood of a human reply, per channel. */
@@ -2175,7 +2179,9 @@ const Engine = (() => {
     return { encoding: gsm ? 'GSM-7' : 'UCS-2', length, perSegment: single, segments };
   }
 
-  const LINK_SRC = '(?:https?:\\/\\/|www\\.)\\S+|\\b[a-z0-9][a-z0-9-]*\\.(?:com|io|ru|app|co|net|org|me|ai|dev)(?:\\/\\S*)?';
+  // A URL, or a bare domain with a known TLD. The look-behind keeps e-mail
+  // addresses (alex@relay.io) and dotted words (Relay.Company) from matching.
+  const LINK_SRC = '(?:https?:\\/\\/|www\\.)[^\\s<]+|(?<![@\\w.-])[a-z0-9][a-z0-9-]*\\.(?:com|io|ru|app|co|net|org|me|ai|dev)\\b(?:\\/[^\\s<]*)?';
   const LINK_TEST = new RegExp(LINK_SRC, 'i');
   const hasLink = (text) => LINK_TEST.test(String(text || ''));
   const findLinks = (text) => String(text || '').match(new RegExp(LINK_SRC, 'gi')) || [];
@@ -2255,7 +2261,8 @@ const Engine = (() => {
   /**
    * Run the whole campaign and return its full event timeline.
    * @param {object} campaign  {leads, steps, rules, channels}
-   * @param {{seed?:number,startT?:number}} [opts]
+   * @param {{seed?:number,startT?:number,replyText?:(intent:string,variant:number,channel:string)=>string}} [opts]
+   *        replyText lets the engine match inbound text against the campaign stop words.
    */
   function simulate(campaign, opts = {}) {
     const seed = (opts.seed ?? 42) >>> 0;
@@ -2304,11 +2311,12 @@ const Engine = (() => {
       S.set(lead.id, {
         stopped: false, bounced: false, unsub: false, connected: false, invited: false,
         touches: 0, oooSent: false, msgFirst: Object.create(null), hist: Object.create(null), attempts: Object.create(null),
+        pending: new Set(steps.map((s) => s.id)), // steps not yet resolved (sent / skipped) for this lead
       });
       for (const step of steps) {
         const t = nominalTime(step, lead, i);
         push({ t, kind: 'step', lead, step });
-        if (step.channel === 'linkedin' && step.kind !== 'message' && CH.linkedin.likeWarmup) {
+        if (step.channel === 'linkedin' && step.kind !== 'message' && (CH.linkedin.likeWarmup || CH.linkedin.viewProfile)) {
           const lt = Math.max(startT + i * STAGGER, t - (CH.linkedin.warmupDays || 0) * DAY - 120);
           push({ t: lt, kind: 'like', lead, step });
         }
@@ -2334,10 +2342,16 @@ const Engine = (() => {
       }
     }
 
+    /** SMS and calls follow the phone-code timezone only when tz-by-code is on; otherwise sender time. */
+    function tzFor(lead, channel) {
+      return (channel === 'sms' || channel === 'call') && CH.sms.tzByCode === false ? SENDER_TZ : lead.tz;
+    }
+
     function checkCondition(step, st) {
       if (!step.condition || step.condition === 'no_reply' || !step.ref) return { ok: true };
       const h = st.hist[step.ref];
-      if (!h) return { ok: false, reason: 'ref_not_sent' };
+      // The referenced step may itself be delayed (limits, weekend): wait for it instead of skipping.
+      if (!h) return st.pending.has(step.ref) ? { ok: false, wait: true } : { ok: false, reason: 'ref_not_sent' };
       switch (step.condition) {
         case 'opened': return h.opened ? { ok: true } : { ok: false, reason: 'not_opened' };
         case 'not_opened': return !h.opened ? { ok: true } : { ok: false, reason: 'opened' };
@@ -2437,25 +2451,34 @@ const Engine = (() => {
         push({ ...job, t: nextWindow(job.t, lead.tz, rules) + rand(5, 60) });
         return;
       }
-      emit(job.t, lead, 'like', { channel: 'linkedin', step: job.step.id });
+      if (CH.linkedin.viewProfile) emit(job.t, lead, 'view', { channel: 'linkedin', step: job.step.id });
+      if (CH.linkedin.likeWarmup) emit(job.t + 1, lead, 'like', { channel: 'linkedin', step: job.step.id });
     }
 
     function onStep(job, st) {
       const { lead, step } = job;
 
       // 1) Branching condition — evaluated once, at the nominal time of the step.
+      const resolve = () => st.pending.delete(step.id);
       if (!job.checked) {
         const verdict = checkCondition(step, st);
+        // Re-check twice a day for up to 3 weeks (the campaign horizon), then give up.
+        if (verdict.wait && (job.waits || 0) < 42) {
+          push({ ...job, t: job.t + DAY / 2, waits: (job.waits || 0) + 1 });
+          return;
+        }
         if (!verdict.ok) {
-          emit(job.t, lead, 'skip', { step: step.id, channel: step.channel, reason: verdict.reason, ref: step.ref });
+          emit(job.t, lead, 'skip', { step: step.id, channel: step.channel, reason: verdict.reason || 'ref_not_sent', ref: step.ref });
+          resolve();
           return;
         }
         job.checked = true;
       }
 
-      // 2) Working hours in the recipient's timezone.
-      if (!inWindow(job.t, lead.tz, rules)) {
-        const until = nextWindow(job.t, lead.tz, rules) + rand(4, 45);
+      // 2) Working hours in the recipient's timezone (sender time for SMS/calls if tz-by-code is off).
+      const tz = tzFor(lead, step.channel);
+      if (!inWindow(job.t, tz, rules)) {
+        const until = nextWindow(job.t, tz, rules) + rand(4, 45);
         const info = localInfo(job.t, lead.tz);
         emit(job.t, lead, 'deferred', {
           step: step.id, channel: step.channel, until, local: info.min,
@@ -2470,20 +2493,23 @@ const Engine = (() => {
       let tried = null;
       if (channel === 'messenger') {
         const found = cascadeOrder.find((c) => reachable(lead, c, st));
-        if (!found) { emit(job.t, lead, 'no_channel', { step: step.id, channel: 'messenger' }); return; }
+        if (!found) { emit(job.t, lead, 'no_channel', { step: step.id, channel: 'messenger' }); resolve(); return; }
         const pos = cascadeOrder.indexOf(found);
         if (pos > 0) tried = cascadeOrder.slice(0, pos);
         channel = found;
       } else if (!reachable(lead, channel, st)) {
         emit(job.t, lead, 'skip', { step: step.id, channel, reason: channel === 'email' && st.bounced ? 'bounced' : 'no_contact' });
+        resolve();
         return;
       }
       if (channel === 'linkedin' && step.kind === 'message' && !st.connected) {
         emit(job.t, lead, 'skip', { step: step.id, channel, reason: 'not_connected' });
+        resolve();
         return;
       }
       if (channel === 'linkedin' && step.kind !== 'message' && st.invited) {
         emit(job.t, lead, 'skip', { step: step.id, channel, reason: 'already_invited' });
+        resolve();
         return;
       }
 
@@ -2491,7 +2517,7 @@ const Engine = (() => {
       const res = acquire(channel, step, job.t, lead);
       if (!res) {
         const day = Math.floor(job.t / DAY);
-        const until = nextWindow((day + 1) * DAY, lead.tz, rules) + rand(4, 60);
+        const until = nextWindow((day + 1) * DAY, tz, rules) + rand(4, 60);
         emit(job.t, lead, 'limit', { step: step.id, channel, until });
         push({ ...job, t: until });
         return;
@@ -2499,8 +2525,10 @@ const Engine = (() => {
       if (tried) emit(job.t, lead, 'cascade', { step: step.id, channel, tried });
       if (res.rotatedFrom) emit(job.t, lead, 'rotation', { step: step.id, channel, from: res.rotatedFrom, to: res.label });
       st.touches++;
+      resolve();
+      const offHours = !inWindow(job.t, lead.tz, rules); // only possible when tz-by-code is off
 
-      if (channel === 'call') { onCall(job, st, res); return; }
+      if (channel === 'call') { onCall(job, st, res, offHours); return; }
 
       // 5) Messenger safety: links in the first message, typing, rich media.
       const isMsgr = MESSENGERS.includes(channel);
@@ -2508,9 +2536,9 @@ const Engine = (() => {
       const linkStripped = isMsgr && !st.msgFirst[channel] && link && !!CH[channel].noLinksFirst;
       emit(job.t, lead, 'send', {
         step: step.id, channel, via: res.label, kind: step.kind || 'message',
-        typing: isMsgr && CH[channel].typing ? rand(3, 12) : 0,
+        typing: isMsgr && CH[channel].typing ? Math.max(1, Math.round(rand(3, 12) * (TYPING_SPEED[CH[channel].typingSpeed] || 1))) : 0,
         media: isMsgr ? richMedia(channel) : null,
-        linkStripped, local: localInfo(job.t, lead.tz).min,
+        linkStripped, offHours, local: localInfo(job.t, lead.tz).min,
       });
       if (linkStripped) emit(job.t, lead, 'link_stripped', { step: step.id, channel });
       st.msgFirst[channel] = true;
@@ -2528,9 +2556,13 @@ const Engine = (() => {
         return;
       }
       const isInvite = channel === 'linkedin' && step.kind !== 'message';
-      if (isInvite && R() < P.accept) push({ t: t + rand(90, 2200), kind: 'outcome', type: 'accepted', lead, step });
+      // A like and a profile view before the invite make the name familiar.
+      const acceptP = clamp01(P.accept * (CH.linkedin.likeWarmup ? 1.15 : 1) * (CH.linkedin.viewProfile ? 1.08 : 1));
+      if (isInvite && R() < acceptP) push({ t: t + rand(90, 2200), kind: 'outcome', type: 'accepted', lead, step });
 
-      const reads = !isInvite && R() < clamp01(P.open * (READ_FACTOR[channel] || 1));
+      // HTML emails land in "Promotions" more often than plain text.
+      const formatFactor = channel === 'email' && !CH.email.plainText ? 0.88 : 1;
+      const reads = !isInvite && R() < clamp01(P.open * (READ_FACTOR[channel] || 1) * formatFactor);
       const readT = t + rand(6, 540);
       if (reads) {
         const observable = channel === 'email' ? !!CH.email.trackOpens : MESSENGERS.includes(channel) || channel === 'linkedin';
@@ -2553,12 +2585,12 @@ const Engine = (() => {
       }
     }
 
-    function onCall(job, st, res) {
+    function onCall(job, st, res, offHours) {
       const { lead, step } = job;
       const C = CH.call;
       const P = lead.persona;
       const attempt = (st.attempts[step.id] = (st.attempts[step.id] || 0) + 1);
-      emit(job.t, lead, 'call', { step: step.id, channel: 'call', via: res.label, localNumber: !!C.localPresence, attempt });
+      emit(job.t, lead, 'call', { step: step.id, channel: 'call', via: res.label, localNumber: !!C.localPresence, attempt, offHours });
       st.hist[step.id] = { channel: 'call', t: job.t, opened: false, clicked: false, link: false };
 
       // Local caller ID noticeably lifts the pickup rate.
@@ -2580,14 +2612,25 @@ const Engine = (() => {
         }
         emit(job.t + 1, lead, 'amd', { step: step.id, channel: 'call', action: C.amdAction });
         if (C.amdAction === 'retry' && attempt < C.maxAttempts) {
-          push({ ...job, t: job.t + DAY + rand(-40, 40), checked: true });
+          push({ ...job, t: job.t + DAY + rand(-40, 40), checked: true, retry: true });
         } else if (C.amdAction === 'sms' && reachable(lead, 'sms', st)) {
-          emit(job.t + 2, lead, 'send', { step: step.id, channel: 'sms', via: CH.sms.senderId, kind: 'call_followup', local: localInfo(job.t, lead.tz).min });
+          // The follow-up SMS goes through the same daily SMS quota as any other SMS.
+          const sms = acquire('sms', step, job.t, lead);
+          if (sms) emit(job.t + 2, lead, 'send', { step: step.id, channel: 'sms', via: sms.label, kind: 'call_followup', local: localInfo(job.t, lead.tz).min });
         }
         return;
       }
       emit(job.t + 1, lead, 'no_answer', { step: step.id, channel: 'call', attempt });
-      if (attempt < C.maxAttempts) push({ ...job, t: job.t + rand(180, 300), checked: true });
+      if (attempt < C.maxAttempts) push({ ...job, t: job.t + rand(180, 300), checked: true, retry: true });
+    }
+
+    /** Which campaign stop word (if any) the inbound text contains. */
+    function stopWordIn(intent, variant, channel) {
+      const words = (CH.sms.stopWords || []).map((w) => String(w).trim().toLowerCase()).filter(Boolean);
+      if (!words.length || channel === 'call') return null;
+      if (!opts.replyText) return intent === 'stop' ? words[0] : null; // headless callers without texts
+      const text = String(opts.replyText(intent, variant, channel) || '').toLowerCase();
+      return words.find((w) => text.includes(w)) || null;
     }
 
     function stopLead(t, lead, st, reason, channel) {
@@ -2596,7 +2639,7 @@ const Engine = (() => {
       for (let i = queue.length - 1; i >= 0; i--) {
         const j = queue[i];
         if (j.lead.id === lead.id && j.kind !== 'outcome') {
-          if (j.kind === 'step') cancelled++;
+          if (j.kind === 'step' && !j.retry) cancelled++; // a call retry is not a separate step
           queue.splice(i, 1);
         }
       }
@@ -2630,8 +2673,10 @@ const Engine = (() => {
         case 'reply': {
           if (st.stopped) break;
           const intent = job.intent || lead.persona.intent;
-          emit(job.t, lead, 'reply', { step: step.id, channel: job.channel, intent, variant: lead.persona.variant || 0 });
-          if (intent === 'stop') { st.unsub = true; emit(job.t, lead, 'unsubscribe', { channel: job.channel }); }
+          const variant = lead.persona.variant || 0;
+          emit(job.t, lead, 'reply', { step: step.id, channel: job.channel, intent, variant });
+          const word = stopWordIn(intent, variant, job.channel);
+          if (word) { st.unsub = true; emit(job.t, lead, 'unsubscribe', { channel: job.channel, word }); }
           if (job.meeting) emit(job.t + 1, lead, 'meeting', { channel: job.channel, manager: CH.call.transferTo });
           stopLead(job.t, lead, st, 'reply', job.channel);
           break;
@@ -2656,25 +2701,28 @@ const Engine = (() => {
   /** Aggregate the raw timeline into forecast-friendly structures. */
   function summarize({ seed, startT, events, steps, usage, leads }) {
     events.sort((a, b) => a.t - b.t || a.seq - b.seq);
-    const startDay = Math.floor(startT / DAY);
+    // Days are counted in the sender's calendar — the same "Day N" the track and live clock show.
+    const senderDay = (t) => Math.floor((t + SENDER_TZ * 60) / DAY);
+    const startDay = senderDay(startT);
     const lastT = events.length ? events[events.length - 1].t : startT;
     const endT = Math.max(lastT + 30, startT + DAY);
-    const days = Math.max(1, Math.floor(endT / DAY) - startDay + 1);
+    const days = Math.max(1, senderDay(endT) - startDay + 1);
     const byDay = Array.from({ length: days }, (_, d) => ({ day: d + 1, byCh: {}, sends: 0, deferred: 0, limit: 0, replies: 0 }));
     const stepStats = {};
     for (const s of steps) stepStats[s.id] = { sent: 0, skipped: 0, deferred: 0, limit: 0 };
     const stats = {
       leads: leads.length, sends: 0, contacted: 0, opens: 0, clicks: 0, humanReplies: 0, positive: 0,
       deferred: 0, night: 0, weekend: 0, limit: 0, cascades: 0, stripped: 0, stops: 0, cancelled: 0,
-      skips: 0, bounces: 0, meetings: 0, amd: 0, unsub: 0, autoReplies: 0, rotations: 0,
+      skips: 0, bounces: 0, meetings: 0, amd: 0, unsub: 0, autoReplies: 0, rotations: 0, offHours: 0,
     };
     const contacted = new Set();
     for (const e of events) {
-      const d = byDay[Math.floor(e.t / DAY) - startDay];
+      const d = byDay[senderDay(e.t) - startDay];
       const ss = e.step ? stepStats[e.step] : null;
       switch (e.type) {
         case 'send': case 'call':
           stats.sends++; contacted.add(e.lead);
+          if (e.offHours) stats.offHours++;
           if (d) { d.sends++; d.byCh[e.channel] = (d.byCh[e.channel] || 0) + 1; }
           if (ss && e.kind !== 'call_followup' && !(e.type === 'call' && e.attempt > 1)) ss.sent++;
           break;
@@ -3083,8 +3131,8 @@ const Data = (() => {
       leads: [], goal: '', tone: 'friendly', messagesReady: false, textsCustom: false,
       steps: defaultSteps(),
       rules: {
-        workStart: 9, workEnd: 19, skipWeekends: true, tzSource: 'phone',
-        stopOnMeeting: true, bounceFallback: true, ignoreAutoReply: true,
+        workStart: 9, workEnd: 19, skipWeekends: true,
+        bounceFallback: true, ignoreAutoReply: true,
         cascade: Engine.CASCADE_DEFAULT.map((id) => ({ id, on: true })),
       },
       channels: defaultChannels(),
@@ -3233,11 +3281,12 @@ const Data = (() => {
   function personalize(text, lead, lang) {
     if (!lead) return text || '';
     const city = CITIES[lead.city] ? L(CITIES[lead.city].name, lang) : '';
+    // Function replacers: names like "A$&B" must never be treated as replacement patterns.
     return String(text || '')
-      .replace(/\{\{\s*firstName\s*\}\}/g, lead.firstName)
-      .replace(/\{\{\s*company\s*\}\}/g, lead.company)
-      .replace(/\{\{\s*city\s*\}\}/g, city)
-      .replace(/\{\{\s*role\s*\}\}/g, lead.role);
+      .replace(/\{\{\s*firstName\s*\}\}/g, () => lead.firstName)
+      .replace(/\{\{\s*company\s*\}\}/g, () => lead.company)
+      .replace(/\{\{\s*city\s*\}\}/g, () => city)
+      .replace(/\{\{\s*role\s*\}\}/g, () => lead.role);
   }
 
   /* ------------------------------------------------------------------ */
@@ -3286,7 +3335,17 @@ const Data = (() => {
     stop: { label: ['Стоп-слово — отписан', 'Stop word — unsubscribed'], summary: ['Автоматически отписан во всех каналах и добавлен в стоп-лист.', 'Automatically unsubscribed from every channel and added to the block list.'], reply: ['Вы отписаны. Извините за беспокойство.', 'You’re unsubscribed. Sorry for the trouble.'] },
   };
 
+  /**
+   * Inbound reply text in both languages — handed to the engine so stop words are
+   * matched against what the person actually wrote, independent of the UI language.
+   */
+  function replyTextAll(intent, variant) {
+    const pool = REPLIES[intent] || REPLIES.question;
+    return pool[(variant || 0) % pool.length].join(' \n ');
+  }
+
   return {
+    replyTextAll,
     L, CHANNELS, CITIES, REACH, CALLER_IDS, MANAGERS, VOICES, QUICK_GOALS, VOICE_SAMPLE, SENDER,
     REPLIES, CALL_SUMMARY, INSIGHT, TPL_FOR_CHANNEL,
     demoLeads, makeLead, parseCSV, parseList, coverage, defaultCampaign, defaultSteps, defaultChannels,
@@ -3480,11 +3539,14 @@ function loadState() {
     if (saved.v !== fresh.v) return { state: fresh, restored: false };
     const ui = { ...fresh.ui, ...saved.ui, inbox: { ...fresh.ui.inbox, ...(saved.ui || {}).inbox } };
     for (const k of TRANSIENT_UI) ui[k] = fresh.ui[k];
+    const savedLang = ui.lang;
     if (params.get('lang')) ui.lang = lang;
     return {
       restored: true,
+      langChanged: savedLang !== ui.lang ? savedLang : null,
       state: {
         ...fresh, ...saved, ui,
+        campaign: mergeCampaign(fresh.campaign, saved.campaign),
         sim: { ...fresh.sim, ...saved.sim, playing: false },
         session: { ...fresh.session, startedAt: Date.now() },
       },
@@ -3492,6 +3554,17 @@ function loadState() {
   } catch (_) {
     return { state: fresh, restored: false };
   }
+}
+
+/**
+ * Saved campaigns are merged over current defaults, so settings added in a
+ * newer build (new channel knobs, rules) get sane values instead of `undefined`.
+ */
+function mergeCampaign(def, saved) {
+  if (!saved) return def;
+  const channels = { ...def.channels };
+  for (const k of Object.keys(def.channels)) channels[k] = { ...def.channels[k], ...((saved.channels || {})[k] || {}) };
+  return { ...def, ...saved, rules: { ...def.rules, ...(saved.rules || {}) }, channels };
 }
 
 const boot = loadState();
@@ -3522,15 +3595,22 @@ function memoize(key, deps, fn) {
 function bump() { rev++; persistSoon(); }
 
 /** Dry-run of the current settings — powers the PRO forecast and the Simple launch bar. */
-const forecast = () => memoize('forecast', `${rev}:${state.sim.seed}`, () => Engine.simulate(state.campaign, { seed: state.sim.seed }));
+/** Engine options shared by the forecast and the live run: inbound texts feed stop-word matching. */
+const simOpts = (seed) => ({ seed, replyText: Data.replyTextAll });
+const forecast = () => memoize('forecast', `${rev}:${state.sim.seed}`, () => Engine.simulate(state.campaign, simOpts(state.sim.seed)));
 
 let liveRes = null;
 let liveResId = -1;
-/** Frozen timeline of the launched campaign (recomputed lazily after a reload). */
+/**
+ * Frozen timeline of the launched campaign. The snapshot (campaign + seed) is
+ * immutable after launch, so re-simulating it after a reload reproduces the
+ * exact same history the inbox state refers to.
+ */
 function liveResult() {
   if (!state.sim.launched || !state.sim.snapshot) return null;
   if (!liveRes || liveResId !== state.sim.launchId) {
-    liveRes = Engine.simulate(state.sim.snapshot, { seed: state.sim.seed });
+    const snap = state.sim.snapshot;
+    liveRes = Engine.simulate(snap, simOpts(snap.seed ?? state.sim.seed));
     liveResId = state.sim.launchId;
   }
   return liveRes;
@@ -3626,10 +3706,11 @@ function stepNoun(s) {
   return t('noun.messenger');
 }
 
-function condPlain(s) {
-  if (stepIndex(s.id) === 0) return t('cond.plain.first');
+/** @param list the step list the condition lives in (current campaign or the launched snapshot). */
+function condPlain(s, list = steps()) {
+  if (list.findIndex((x) => x.id === s.id) === 0) return t('cond.plain.first');
   if (s.condition === 'no_reply' || !s.ref) return t('cond.plain.no_reply');
-  return t(`cond.plain.${s.condition}`, { what: stepNoun(stepById(s.ref)) });
+  return t(`cond.plain.${s.condition}`, { what: stepNoun(list.find((x) => x.id === s.ref)) });
 }
 
 const PLACEHOLDER_LEAD = { id: 'P', firstName: 'Анна', name: 'Анна Смирнова', company: 'ЛогиТех', city: 'moscow', role: 'CEO', tz: 3, has: {} };
@@ -3756,6 +3837,9 @@ function preflight() {
       if (!C[m].typing) out.push({ level: 'warn', text: t('pf.noTyping', { ch: chName(m) }), fix: { arg: `typing-on:${m}`, label: t('fix.typing') } });
     }
     if (usesChannel('call') && !C.call.amd) out.push({ level: 'warn', text: t('pf.noAmd'), fix: { arg: 'amd-on', label: t('fix.amd') } });
+    if ((usesChannel('sms') || usesChannel('call')) && !C.sms.tzByCode) {
+      out.push({ level: 'warn', text: t('pf.noTzCode', { n: forecast().stats.offHours }), fix: { arg: 'tz-on', label: t('fix.tzOn') } });
+    }
     out.push({ level: 'ok', text: t('pf.ok.stop') });
     out.push({ level: 'ok', text: t('pf.ok.hours', { a: c.rules.workStart, b: c.rules.workEnd }) });
     if (steps().some((s) => s.channel === 'messenger')) out.push({ level: 'ok', text: t('pf.ok.cascade', { list: c.rules.cascade.filter((x) => x.on).map((x) => chName(x.id)).join(' → ') }) });
@@ -3791,6 +3875,7 @@ function riskScore() {
       if (C[m].dailyPerNumber > SAFE_PER_NUMBER[m]) s += 9;
     }
     if (usesChannel('call') && !C.call.amd) s += 3;
+    if ((usesChannel('sms') || usesChannel('call')) && !C.sms.tzByCode) s += 8; // night SMS → complaints
     const score = clamp(Math.round(s), 0, 100);
     return { score, level: score < 30 ? 'low' : score < 60 ? 'mid' : 'high' };
   });
@@ -3910,10 +3995,12 @@ function LaunchFx() {
   </div>`;
 }
 
+/** The live region is always in the DOM so screen readers announce toasts inserted into it. */
 function Toast() {
   const x = state.ui.toast;
+  if (!x) return '<div class="toast-wrap" role="status" aria-live="polite" data-key="toast-region"></div>';
   const ic = x.ic || (x.kind === 'error' || x.kind === 'warn' ? 'alert' : x.kind === 'reply' ? 'reply' : 'check-circle');
-  return `<div class="toast-wrap" aria-live="polite"><div class="${cls('toast', `toast-${x.kind}`)}" data-key="toast-${x.id}" data-testid="toast">${icon(ic)}<span>${x.text}</span><button class="toast-x" data-action="closeToast" aria-label="${t('common.close')}">${icon('x')}</button></div></div>`;
+  return `<div class="toast-wrap" role="status" aria-live="polite" data-key="toast-region"><div class="${cls('toast', `toast-${x.kind}`)}" data-key="toast-${x.id}" data-testid="toast">${icon(ic)}<span>${x.text}</span><button class="toast-x" data-action="closeToast" aria-label="${t('common.close')}">${icon('x')}</button></div></div>`;
 }
 
 function EventsDrawer() {
@@ -4094,7 +4181,8 @@ function richPreview(text, lead, { stripLinks = false } = {}) {
   const vars = { firstName: lead.firstName, company: lead.company, city, role: lead.role };
   return esc(src)
     .replace(/\{\{\s*(firstName|company|city|role)\s*\}\}/g, (_, k) => `<mark class="var">${esc(vars[k])}</mark>`)
-    .replace(/((?:https?:\/\/|www\.)\S+|\b[a-z0-9][a-z0-9-]*\.(?:com|io|ru|app|co|net|org|me|ai|dev)(?:\/\S*)?)/gi, '<u class="link">$1</u>')
+    // [^\s<] keeps a link from swallowing the <mark> of an adjacent variable.
+    .replace(/((?:https?:\/\/|www\.)[^\s<]+|(?<![@\w.-])[a-z0-9][a-z0-9-]*\.(?:com|io|ru|app|co|net|org|me|ai|dev)\b(?:\/[^\s<]*)?)/gi, '<u class="link">$1</u>')
     .replace(/\n/g, '<br>');
 }
 
@@ -4132,7 +4220,8 @@ function WizTrack() {
 }
 
 /** The visual "track": a day ruler with step bubbles placed on their day. Shared by builder and live views. */
-function Track({ live, proj, list = sortedForView() }) {
+/** In live mode `list`/`rules` come from the launched snapshot, never from the editable campaign. */
+function Track({ live, proj, list = sortedForView(), rules = state.campaign.rules }) {
   const days = Math.max(8, Math.max(1, ...list.map((s) => s.day)) + 1);
   const rowOf = {};
   const perDay = {};
@@ -4146,7 +4235,7 @@ function Track({ live, proj, list = sortedForView() }) {
   }).join('')}</div>
     <div class="track-lane">
       <div class="track-line" aria-hidden="true"><i style="width:${progress * 100}%"></i></div>
-      ${list.map((s) => TrackNode(s, rowOf[s.id], live, proj)).join('')}
+      ${list.map((s) => TrackNode(s, rowOf[s.id], live, proj, list, rules)).join('')}
       ${live ? '' : `<div class="tnode tnode-ghost" data-key="n-ghost" style="grid-column:${Math.min(days, Math.max(...list.map((s) => s.day)) + 1)};grid-row:1">
         <button class="tnode-bubble" data-action="toggleAddMenu" data-testid="add-step" aria-expanded="${state.ui.addMenu}" aria-label="${t('track.add')}">${icon('plus')}</button>
         <div class="tnode-title">${t('track.add')}</div></div>`}
@@ -4154,16 +4243,16 @@ function Track({ live, proj, list = sortedForView() }) {
   </div>`;
 }
 
-function TrackNode(s, row, live, proj) {
+function TrackNode(s, row, live, proj, list, rules) {
   const sent = live && proj ? (proj.stepStats[s.id] || { sent: 0 }).sent : 0;
-  const shifted = isWeekendDay(s.day) && state.campaign.rules.skipWeekends;
+  const shifted = isWeekendDay(s.day) && rules.skipWeekends;
   return `<div class="${cls('tnode', live && sent > 0 && 'is-hit')}" data-key="n-${s.id}" style="grid-column:${s.day};grid-row:${row};--c:${chColor(s.channel)}">
     <button class="tnode-bubble" ${live ? 'tabindex="-1"' : `data-action="openStep" data-arg="${s.id}"`} aria-label="${esc(stepTitle(s))}" data-testid="node-${s.id}">
-      ${chIcon(s.channel)}${s.channel === 'messenger' ? `<span class="tnode-cascade" aria-hidden="true">${state.campaign.rules.cascade.filter((c) => c.on).map((c) => `<i style="--c:${chColor(c.id)}"></i>`).join('')}</span>` : ''}
+      ${chIcon(s.channel)}${s.channel === 'messenger' ? `<span class="tnode-cascade" aria-hidden="true">${rules.cascade.filter((c) => c.on).map((c) => `<i style="--c:${chColor(c.id)}"></i>`).join('')}</span>` : ''}
       ${live && sent ? `<span class="tnode-count mono">${sent}</span>` : ''}
     </button>
     <div class="tnode-title">${stepTitle(s)}</div>
-    <div class="tnode-cond">${condPlain(s)}</div>
+    <div class="tnode-cond">${condPlain(s, list)}</div>
     ${shifted ? `<div class="tnode-shift">${icon('moon')} ${t('track.shift')}</div>` : ''}
   </div>`;
 }
@@ -4361,14 +4450,13 @@ function RulesPanel() {
         <h4>${icon('clock')} ${t('rules.hours')}</h4>
         <div class="row"><label>${t('rules.from')}</label>${Select('campaign.rules.workStart', r.workStart, hours(6, 12), 'data-num')}<label>${t('rules.to')}</label>${Select('campaign.rules.workEnd', r.workEnd, hours(15, 22), 'data-num')}</div>
         ${Toggle('campaign.rules.skipWeekends', r.skipWeekends, t('rules.weekends'), t('rules.weekends.hint'))}
-        <div class="row"><label>${t('rules.tzsrc')}</label>${Select('campaign.rules.tzSource', r.tzSource, [{ v: 'phone', label: t('rules.tz.phone') }, { v: 'crm', label: t('rules.tz.crm') }])}</div>
+        ${Toggle('campaign.channels.sms.tzByCode', state.campaign.channels.sms.tzByCode, t('rules.tzcode'), t('rules.tzcode.hint'))}
         ${HoursViz()}
       </div>
       <div class="rcol">
         <h4>${icon('stop')} ${t('rules.autostop')}</h4>
         ${Toggle(null, true, t('rules.stop.reply'), t('rules.stop.reply.hint'), { locked: true })}
         ${Toggle(null, true, t('rules.stop.unsub'), t('rules.stop.unsub.hint'), { locked: true })}
-        ${Toggle('campaign.rules.stopOnMeeting', r.stopOnMeeting, t('rules.stop.meeting'))}
         ${Toggle('campaign.rules.bounceFallback', r.bounceFallback, t('rules.stop.bounce'), t('rules.stop.bounce.hint'))}
         ${Toggle('campaign.rules.ignoreAutoReply', r.ignoreAutoReply, t('rules.stop.ooo'), t('rules.stop.ooo.hint'))}
       </div>
@@ -4700,7 +4788,7 @@ function SmsSettings(s) {
     g.n++;
     groups.set(code, g);
   }
-  const probeOut = probe
+  const probeOut = !sms.tzByCode ? `<div class="probe bad">${t('sms.tz.off')}</div>` : probe
     ? (() => {
       const ok = Engine.inWindow(Engine.LAUNCH_T, probe.tz, state.campaign.rules);
       const next = Engine.nextWindow(Engine.LAUNCH_T, probe.tz, state.campaign.rules);
@@ -4942,7 +5030,7 @@ function LiveSimple(P) {
     </section>
     <section class="panel track-panel">
       <header class="panel-head"><span class="ph-ic">${icon('route')}</span><div class="ph-text"><b>${t('live.track')}</b><small>${t('live.track.sub')}</small></div></header>
-      ${Track({ live: true, proj: P, list: snapSteps() })}
+      ${Track({ live: true, proj: P, list: snapSteps(), rules: state.sim.snapshot.rules })}
     </section>`;
 }
 
@@ -5053,7 +5141,7 @@ function feedText(it) {
     case 'meeting':
       return { ic: icon('calendar'), color: G, tone: 'green', title: t('feed.meeting', { name }), sub: t('feed.meeting.sub') };
     case 'unsubscribe':
-      return { ic: icon('ban'), color: R, title: t('feed.unsub', { name, a: gA(lead) }), sub: t('feed.unsub.sub') };
+      return { ic: icon('ban'), color: R, title: t('feed.unsub', { name, a: gA(lead) }), sub: t('feed.unsub.sub', { w: esc(e.word || '') }) };
     case 'rotation':
       return { ic: icon('inbox'), color: chColor('email'), title: t('feed.rotation', { from: esc(e.from) }), sub: t('feed.rotation.sub', { to: esc(e.to) }) };
     case 'no_channel':
@@ -5121,7 +5209,7 @@ function LeadsTable(P) {
     const st = leadStatus(l, P);
     const p = clockParts(T, l.tz);
     const awake = Engine.inWindow(T, l.tz, state.sim.snapshot.rules);
-    return `<tr data-key="lr-${l.id}" class="${cls(light && 'is-replied')}" data-action="focusLead" data-arg="${l.id}">
+    return `<tr data-key="lr-${l.id}" class="${cls(light && 'is-replied')}" data-action="focusLead" data-arg="${l.id}" tabindex="0" aria-label="${esc(l.name)}">
         <td>${LightDot(light)}</td>
         <td><div class="lt-lead">${Avatar(l, 'sm')}<div><b>${esc(l.name)}</b><small>${esc(l.company)}</small></div></div></td>
         <td class="mono"><span class="${cls('lt-time', awake ? 'day' : 'night')}">${icon(awake ? 'sun' : 'moon')} ${pad2(p.hh)}:${pad2(p.mm)}</span> <small>${esc(cityName(l.city))}</small></td>
@@ -5356,7 +5444,7 @@ function ThreadMsg(it, lead) {
     case 'bounce':
       return sysLine('alert', `${t('feed.bounce', { name })} — ${t('feed.bounce.sub')}`, 'bad');
     case 'unsubscribe':
-      return sysLine('ban', t('feed.unsub.sub'), 'bad');
+      return sysLine('ban', t('feed.unsub.sub', { w: esc(e.word || '') }), 'bad');
     case 'no_channel':
       return sysLine('phone-off', t('feed.nochannel.sub'));
     default:
@@ -5445,7 +5533,8 @@ const A = {
   toggleDrawer() {
     state.ui.drawer = !state.ui.drawer;
     if (state.ui.drawer) track('analytics_drawer_opened');
-    render();
+    renderNow();
+    if (state.ui.drawer) openDialog('[data-testid="drawer"]'); else closeDialog();
   },
   exportAnalytics() {
     const blob = new Blob([JSON.stringify(state.analytics, null, 2)], { type: 'application/json' });
@@ -5507,8 +5596,13 @@ const A = {
   editDraft(id) { state.ui.editingDraft = state.ui.editingDraft === id ? null : id; render(); },
 
   /* -------------------------------- steps ------------------------------- */
-  openStep(id) { state.ui.editStep = id; track('step_opened', { step: id }); render(); },
-  closeStep() { state.ui.editStep = null; render(); },
+  openStep(id) {
+    state.ui.editStep = id;
+    track('step_opened', { step: id });
+    renderNow();
+    openDialog('[data-testid="sheet"]');
+  },
+  closeStep() { state.ui.editStep = null; renderNow(); closeDialog(); },
   stepDay(arg) {
     const [id, d] = arg.split(':');
     const s = stepById(id);
@@ -5608,6 +5702,7 @@ const A = {
     const list = state.campaign.channels.sms.stopWords;
     if (!list.includes(w)) list.push(w);
     state.ui.newStopWord = '';
+    syncFocused('ui.newStopWord', '');
     bump();
     track('stop_word_added', { word: w });
     render();
@@ -5696,6 +5791,7 @@ const A = {
     track('reply_sent', { channel: ch, ai_assisted: !!ib.aiUsed, chars: text.length });
     ib.draft = '';
     ib.aiUsed = false;
+    syncFocused('ui.inbox.draft', '');
     persistSoon();
     toast(t('toast.sent', { ch: chName(ch) }), 'ok', 'send');
   },
@@ -5723,6 +5819,40 @@ const A = {
 /* ------------------------------------------------------------------ */
 
 function scrollTop() { window.scrollTo({ top: 0, behavior: 'smooth' }); }
+
+/* Modal focus management: move focus in, trap Tab inside, restore on close. */
+let dialogOpener = null;
+let dialogSel = null;
+function openDialog(sel) {
+  dialogOpener = document.activeElement;
+  dialogSel = sel;
+  const box = document.querySelector(sel);
+  const first = box && box.querySelector('button, [href], input, select, textarea');
+  if (first) first.focus();
+}
+function closeDialog() {
+  dialogSel = null;
+  if (dialogOpener && document.contains(dialogOpener)) dialogOpener.focus();
+  dialogOpener = null;
+}
+function trapTab(e) {
+  const box = dialogSel && document.querySelector(dialogSel);
+  if (!box) return;
+  const items = [...box.querySelectorAll('button:not(:disabled), [href], input:not(:disabled), select, textarea')];
+  if (!items.length) return;
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (!box.contains(document.activeElement)) { e.preventDefault(); first.focus(); } else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+
+/**
+ * Morph never overwrites a focused field (that would fight the user's typing),
+ * so actions that programmatically change a focused field's value set it here.
+ */
+function syncFocused(bindPath, value) {
+  const el = document.activeElement;
+  if (el && el.dataset && el.dataset.bind === bindPath && el.value !== value) el.value = value;
+}
 
 /** Bring freshly revealed content into view (after the DOM has been patched). */
 function scrollToTestId(id, block = 'center') {
@@ -5833,6 +5963,7 @@ function applyFix(arg) {
     case 'mailbox-on': C.email.mailboxes.forEach((m) => { m.enabled = true; }); break;
     case 'pixel-on': C.email.trackOpens = true; break;
     case 'amd-on': C.call.amd = true; break;
+    case 'tz-on': C.sms.tzByCode = true; break;
     case 'links-on': (x ? [x] : MESSENGERS).forEach((m) => { C[m].noLinksFirst = true; }); break;
     case 'msg-limit': C[x].dailyPerNumber = SAFE_PER_NUMBER[x]; break;
     case 'typing-on': C[x].typing = true; break;
@@ -5884,24 +6015,24 @@ function switchMode(next, ev) {
 
 const DEFAULT_NAME = ['Демо-встречи · Q4', 'Demo meetings · Q4'];
 
-function switchLang(next) {
-  const prev = state.ui.lang;
+/**
+ * Translate generated (not user-edited) content to the new UI language.
+ * The launched snapshot is deliberately left alone: it is what was "sent".
+ */
+function relocalize(prev, next) {
   const c = state.campaign;
-  state.ui.lang = next;
   const idx = (lang) => (lang === 'en' ? 1 : 0);
   const known = [...Data.QUICK_GOALS.map((g) => g.text), Data.VOICE_SAMPLE].find((p) => p[idx(prev)] === c.goal);
   if (known) c.goal = known[idx(next)];
   if (c.name === DEFAULT_NAME[idx(prev)]) c.name = DEFAULT_NAME[idx(next)];
-  if (c.messagesReady && !c.textsCustom) {
-    applyDrafts();
-    if (state.sim.snapshot) {
-      for (const s of state.sim.snapshot.steps) {
-        const live = stepById(s.id);
-        if (live) { s.text = live.text; s.subject = live.subject; }
-      }
-    }
-  }
+  if (c.messagesReady && !c.textsCustom) applyDrafts();
   bump();
+}
+
+function switchLang(next) {
+  const prev = state.ui.lang;
+  state.ui.lang = next;
+  relocalize(prev, next);
   track('language_switched', { from: prev, to: next });
   render();
 }
@@ -5990,6 +6121,7 @@ function typeAiDraft(id) {
   draftTimer = setInterval(() => {
     i = Math.min(full.length, i + 3);
     ib.draft = full.slice(0, i);
+    syncFocused('ui.inbox.draft', ib.draft);
     render();
     if (i >= full.length) clearInterval(draftTimer);
   }, params.has('fast') ? 1 : 16);
@@ -6001,8 +6133,9 @@ function launchCampaign() {
   const errors = preflight().filter((x) => x.level === 'error');
   if (errors.length) { toast(errors[0].text, 'error', 'alert'); return; }
   const c = state.campaign;
+  // The snapshot (campaign + seed) is never mutated after launch — see liveResult().
   state.sim = {
-    ...state.sim, launched: true, snapshot: clone(c), launchId: state.sim.launchId + 1,
+    ...state.sim, launched: true, snapshot: { ...clone(c), seed: state.sim.seed }, launchId: state.sim.launchId + 1,
     t: Engine.LAUNCH_T, playing: false,
   };
   state.inboxLocal = { read: {}, overrides: {}, sent: [], meetings: {} };
@@ -6051,7 +6184,10 @@ function tick(now) {
     track('sim_completed', { replies: liveProj().metrics.replied });
     persistSoon();
   }
-  if (finished || now - lastPaint > 80) {
+  // Off the Live screen only the header badge / inbox change — repaint just when replies arrive.
+  const replies = liveProj().metrics.replied;
+  const needed = state.ui.view === 'live' || finished || replies !== lastReplies;
+  if (needed && (finished || now - lastPaint > 80)) {
     lastPaint = now;
     announceReplies();
     render();
@@ -6148,9 +6284,11 @@ function wireEvents() {
       else if (state.ui.addMenu) A.toggleAddMenu();
       return;
     }
-    if ((e.key === 'Enter' || e.key === ' ') && el.matches && el.matches('[data-action][role="button"]')) {
+    if (e.key === 'Tab' && dialogSel) { trapTab(e); return; }
+    if ((e.key === 'Enter' || e.key === ' ') && el.matches && el.matches('[data-action][role="button"], tr[data-action][tabindex]')) {
       e.preventDefault();
-      el.click();
+      // SVG <g role="button"> has no .click(); a synthetic event works for every element.
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       return;
     }
     if (e.key === 'Enter' && el.dataset && el.dataset.enter) {
@@ -6196,7 +6334,7 @@ function App() {
     ${ui.editStep && ui.mode === 'simple' && ui.view === 'builder' ? StepSheet() : ''}
     ${ui.drawer ? EventsDrawer() : ''}
     ${ui.launching ? LaunchFx() : ''}
-    ${ui.toast ? Toast() : ''}`;
+    ${Toast()}`;
 }
 
 let rafPending = false;
@@ -6207,22 +6345,27 @@ function render() {
   requestAnimationFrame(() => { rafPending = false; renderNow(); });
 }
 
+let lastHtml = '';
 function renderNow() {
   const root = document.getElementById('app');
   document.documentElement.dataset.mode = state.ui.mode;
   document.documentElement.lang = state.ui.lang;
-  Morph.morphInto(root, App());
+  const html = App();
+  if (html === lastHtml) return; // nothing changed — skip parsing and diffing entirely
+  lastHtml = html;
+  Morph.morphInto(root, html);
 }
 
 function bootstrap() {
-  if (state.ui.mode === 'pro' && !params.has('mode')) { /* keep the persisted mode */ }
   if (params.get('mode') === 'pro' || params.get('mode') === 'simple') state.ui.mode = params.get('mode');
+  // ?lang= overriding a saved session: translate generated texts too, not just the chrome.
+  if (boot.langChanged) relocalize(boot.langChanged, state.ui.lang);
   wireEvents();
   renderNow();
   track('app_opened', { restored: boot.restored, lang: state.ui.lang, viewport: `${innerWidth}x${innerHeight}` });
   requestAnimationFrame(tick);
   // Public handle for e2e tests, the demo recorder and curious reviewers.
-  window.Relay = { state, A, Engine, Data, render: renderNow, liveResult, liveProj, preflight, riskScore };
+  window.Relay = { state, A, Engine, Data, Morph, render: renderNow, liveResult, liveProj, preflight, riskScore, forecast };
 }
 
 bootstrap();

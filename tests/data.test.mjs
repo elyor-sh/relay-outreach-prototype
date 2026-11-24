@@ -55,6 +55,11 @@ test('CSV and free-form list import', () => {
   assert.equal(list[0].email, 'ivan@acme.ru');
 });
 
+test('personalisation never interprets $ patterns in lead data', () => {
+  const out = Data.personalize('Hi {{firstName}}!', { firstName: "A$&B$'C", company: '', city: 'moscow', role: '' }, 'en');
+  assert.equal(out, "Hi A$&B$'C!");
+});
+
 test('personalisation fills every variable', () => {
   const lead = Data.demoLeads()[0];
   const out = Data.personalize('{{firstName}} / {{company}} / {{city}} / {{role}}', lead, 'en');

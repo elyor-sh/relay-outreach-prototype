@@ -26,7 +26,8 @@ const A = {
   toggleDrawer() {
     state.ui.drawer = !state.ui.drawer;
     if (state.ui.drawer) track('analytics_drawer_opened');
-    render();
+    renderNow();
+    if (state.ui.drawer) openDialog('[data-testid="drawer"]'); else closeDialog();
   },
   exportAnalytics() {
     const blob = new Blob([JSON.stringify(state.analytics, null, 2)], { type: 'application/json' });
@@ -88,8 +89,13 @@ const A = {
   editDraft(id) { state.ui.editingDraft = state.ui.editingDraft === id ? null : id; render(); },
 
   /* -------------------------------- steps ------------------------------- */
-  openStep(id) { state.ui.editStep = id; track('step_opened', { step: id }); render(); },
-  closeStep() { state.ui.editStep = null; render(); },
+  openStep(id) {
+    state.ui.editStep = id;
+    track('step_opened', { step: id });
+    renderNow();
+    openDialog('[data-testid="sheet"]');
+  },
+  closeStep() { state.ui.editStep = null; renderNow(); closeDialog(); },
   stepDay(arg) {
     const [id, d] = arg.split(':');
     const s = stepById(id);
@@ -189,6 +195,7 @@ const A = {
     const list = state.campaign.channels.sms.stopWords;
     if (!list.includes(w)) list.push(w);
     state.ui.newStopWord = '';
+    syncFocused('ui.newStopWord', '');
     bump();
     track('stop_word_added', { word: w });
     render();
@@ -277,6 +284,7 @@ const A = {
     track('reply_sent', { channel: ch, ai_assisted: !!ib.aiUsed, chars: text.length });
     ib.draft = '';
     ib.aiUsed = false;
+    syncFocused('ui.inbox.draft', '');
     persistSoon();
     toast(t('toast.sent', { ch: chName(ch) }), 'ok', 'send');
   },
@@ -304,6 +312,40 @@ const A = {
 /* ------------------------------------------------------------------ */
 
 function scrollTop() { window.scrollTo({ top: 0, behavior: 'smooth' }); }
+
+/* Modal focus management: move focus in, trap Tab inside, restore on close. */
+let dialogOpener = null;
+let dialogSel = null;
+function openDialog(sel) {
+  dialogOpener = document.activeElement;
+  dialogSel = sel;
+  const box = document.querySelector(sel);
+  const first = box && box.querySelector('button, [href], input, select, textarea');
+  if (first) first.focus();
+}
+function closeDialog() {
+  dialogSel = null;
+  if (dialogOpener && document.contains(dialogOpener)) dialogOpener.focus();
+  dialogOpener = null;
+}
+function trapTab(e) {
+  const box = dialogSel && document.querySelector(dialogSel);
+  if (!box) return;
+  const items = [...box.querySelectorAll('button:not(:disabled), [href], input:not(:disabled), select, textarea')];
+  if (!items.length) return;
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (!box.contains(document.activeElement)) { e.preventDefault(); first.focus(); } else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+
+/**
+ * Morph never overwrites a focused field (that would fight the user's typing),
+ * so actions that programmatically change a focused field's value set it here.
+ */
+function syncFocused(bindPath, value) {
+  const el = document.activeElement;
+  if (el && el.dataset && el.dataset.bind === bindPath && el.value !== value) el.value = value;
+}
 
 /** Bring freshly revealed content into view (after the DOM has been patched). */
 function scrollToTestId(id, block = 'center') {
@@ -414,6 +456,7 @@ function applyFix(arg) {
     case 'mailbox-on': C.email.mailboxes.forEach((m) => { m.enabled = true; }); break;
     case 'pixel-on': C.email.trackOpens = true; break;
     case 'amd-on': C.call.amd = true; break;
+    case 'tz-on': C.sms.tzByCode = true; break;
     case 'links-on': (x ? [x] : MESSENGERS).forEach((m) => { C[m].noLinksFirst = true; }); break;
     case 'msg-limit': C[x].dailyPerNumber = SAFE_PER_NUMBER[x]; break;
     case 'typing-on': C[x].typing = true; break;
@@ -465,24 +508,24 @@ function switchMode(next, ev) {
 
 const DEFAULT_NAME = ['Демо-встречи · Q4', 'Demo meetings · Q4'];
 
-function switchLang(next) {
-  const prev = state.ui.lang;
+/**
+ * Translate generated (not user-edited) content to the new UI language.
+ * The launched snapshot is deliberately left alone: it is what was "sent".
+ */
+function relocalize(prev, next) {
   const c = state.campaign;
-  state.ui.lang = next;
   const idx = (lang) => (lang === 'en' ? 1 : 0);
   const known = [...Data.QUICK_GOALS.map((g) => g.text), Data.VOICE_SAMPLE].find((p) => p[idx(prev)] === c.goal);
   if (known) c.goal = known[idx(next)];
   if (c.name === DEFAULT_NAME[idx(prev)]) c.name = DEFAULT_NAME[idx(next)];
-  if (c.messagesReady && !c.textsCustom) {
-    applyDrafts();
-    if (state.sim.snapshot) {
-      for (const s of state.sim.snapshot.steps) {
-        const live = stepById(s.id);
-        if (live) { s.text = live.text; s.subject = live.subject; }
-      }
-    }
-  }
+  if (c.messagesReady && !c.textsCustom) applyDrafts();
   bump();
+}
+
+function switchLang(next) {
+  const prev = state.ui.lang;
+  state.ui.lang = next;
+  relocalize(prev, next);
   track('language_switched', { from: prev, to: next });
   render();
 }
@@ -571,6 +614,7 @@ function typeAiDraft(id) {
   draftTimer = setInterval(() => {
     i = Math.min(full.length, i + 3);
     ib.draft = full.slice(0, i);
+    syncFocused('ui.inbox.draft', ib.draft);
     render();
     if (i >= full.length) clearInterval(draftTimer);
   }, params.has('fast') ? 1 : 16);
@@ -582,8 +626,9 @@ function launchCampaign() {
   const errors = preflight().filter((x) => x.level === 'error');
   if (errors.length) { toast(errors[0].text, 'error', 'alert'); return; }
   const c = state.campaign;
+  // The snapshot (campaign + seed) is never mutated after launch — see liveResult().
   state.sim = {
-    ...state.sim, launched: true, snapshot: clone(c), launchId: state.sim.launchId + 1,
+    ...state.sim, launched: true, snapshot: { ...clone(c), seed: state.sim.seed }, launchId: state.sim.launchId + 1,
     t: Engine.LAUNCH_T, playing: false,
   };
   state.inboxLocal = { read: {}, overrides: {}, sent: [], meetings: {} };
@@ -632,7 +677,10 @@ function tick(now) {
     track('sim_completed', { replies: liveProj().metrics.replied });
     persistSoon();
   }
-  if (finished || now - lastPaint > 80) {
+  // Off the Live screen only the header badge / inbox change — repaint just when replies arrive.
+  const replies = liveProj().metrics.replied;
+  const needed = state.ui.view === 'live' || finished || replies !== lastReplies;
+  if (needed && (finished || now - lastPaint > 80)) {
     lastPaint = now;
     announceReplies();
     render();
@@ -729,9 +777,11 @@ function wireEvents() {
       else if (state.ui.addMenu) A.toggleAddMenu();
       return;
     }
-    if ((e.key === 'Enter' || e.key === ' ') && el.matches && el.matches('[data-action][role="button"]')) {
+    if (e.key === 'Tab' && dialogSel) { trapTab(e); return; }
+    if ((e.key === 'Enter' || e.key === ' ') && el.matches && el.matches('[data-action][role="button"], tr[data-action][tabindex]')) {
       e.preventDefault();
-      el.click();
+      // SVG <g role="button"> has no .click(); a synthetic event works for every element.
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       return;
     }
     if (e.key === 'Enter' && el.dataset && el.dataset.enter) {

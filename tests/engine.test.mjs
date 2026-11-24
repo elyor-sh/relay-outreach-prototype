@@ -187,3 +187,90 @@ test('performance: a 48-lead campaign simulates in well under a frame budget × 
   const ms = (performance.now() - t0) / 5;
   assert.ok(ms < 160, `${ms.toFixed(1)} ms per run`);
 });
+
+/* ------------------- regression tests from the code review ------------------- */
+
+test('stop words are matched against the reply text (configurable)', () => {
+  const withText = (c) => Engine.simulate(c, { seed: 42, replyText: Data.replyTextAll });
+  const on = withText(clone(base));
+  const stopReplies = on.events.filter((e) => e.type === 'reply' && e.intent === 'stop');
+  assert.ok(stopReplies.length > 0, 'demo has stop-word replies');
+  const unsub = on.events.filter((e) => e.type === 'unsubscribe');
+  assert.equal(unsub.length, stopReplies.length);
+  assert.ok(unsub.every((e) => e.word), 'the matched word is reported');
+  const off = clone(base);
+  off.channels.sms.stopWords = [];
+  assert.equal(withText(off).events.filter((e) => e.type === 'unsubscribe').length, 0);
+});
+
+test('tz-by-code off: SMS follows sender time and lands in some recipients\' night', () => {
+  const { r: onR } = run();
+  const { c, r } = run((x) => { x.channels.sms.tzByCode = false; });
+  assert.equal(onR.stats.offHours, 0);
+  assert.ok(r.stats.offHours > 0, 'US/BR leads get SMS outside their window');
+  const tzOf = Object.fromEntries(c.leads.map((l) => [l.id, l.tz]));
+  // Only the fixed SMS step: cascade-resolved SMS keep the lead's own timezone by design.
+  for (const e of r.events.filter((x) => x.type === 'send' && x.step === 's6')) {
+    assert.ok(Engine.inWindow(e.t, Engine.SENDER_TZ, c.rules), 'sent inside the sender window');
+    assert.equal(e.offHours, !Engine.inWindow(e.t, tzOf[e.lead], c.rules));
+  }
+});
+
+test('typing speed scales the typing delay', () => {
+  const avg = (speed) => {
+    const { r } = run((c) => { for (const m of ['whatsapp', 'telegram', 'signal']) c.channels[m].typingSpeed = speed; });
+    const xs = r.events.filter((e) => e.type === 'send' && e.typing).map((e) => e.typing);
+    return xs.reduce((a, b) => a + b, 0) / xs.length;
+  };
+  assert.ok(avg('slow') > avg('human') && avg('human') > avg('fast'));
+});
+
+test('LinkedIn warm-up: profile views are logged and raise acceptance', () => {
+  const warm = run().r;
+  assert.ok(warm.events.some((e) => e.type === 'view'));
+  const cold = run((c) => { c.channels.linkedin.likeWarmup = false; c.channels.linkedin.viewProfile = false; }).r;
+  assert.equal(cold.events.filter((e) => e.type === 'like' || e.type === 'view').length, 0);
+  const acc = (r) => r.events.filter((e) => e.type === 'accepted').length;
+  assert.ok(acc(warm) >= acc(cold), `${acc(warm)} >= ${acc(cold)}`);
+});
+
+test('a branch waits for a delayed referenced step instead of skipping it', () => {
+  // The LinkedIn invite (s2) is squeezed by a cap of 2/day; a step branching on it must not be lost.
+  const { r } = run((c) => {
+    c.channels.linkedin.inviteLimit = 2;
+    c.steps.push({ id: 'sx', day: 3, channel: 'email', kind: 'message', tpl: 'email_followup', condition: 'not_opened', ref: 's2', sendAt: 'auto', subject: 'x', text: 'x' });
+  });
+  const delayed = new Set(r.events.filter((e) => e.type === 'limit' && e.step === 's2').map((e) => e.lead));
+  assert.ok(delayed.size > 0);
+  const lostToRace = r.events.filter((e) => e.type === 'skip' && e.step === 'sx' && e.reason === 'ref_not_sent' && delayed.has(e.lead));
+  const sentInvite = new Set(r.events.filter((e) => e.type === 'send' && e.step === 's2').map((e) => e.lead));
+  assert.equal(lostToRace.filter((e) => sentInvite.has(e.lead)).length, 0);
+});
+
+test('AMD→SMS follow-ups respect the SMS daily quota', () => {
+  const { r } = run((c) => {
+    c.channels.call.amdAction = 'sms';
+    c.channels.sms.dailyLimit = 1;
+    c.steps.find((s) => s.id === 's5').condition = 'no_reply';
+  });
+  const perDay = {};
+  for (const e of r.events.filter((x) => x.type === 'send' && x.channel === 'sms')) {
+    const d = Math.floor(e.t / Engine.DAY);
+    perDay[d] = (perDay[d] || 0) + 1;
+  }
+  assert.ok(Object.values(perDay).every((n) => n <= 1), JSON.stringify(perDay));
+});
+
+test('forecast days use the sender calendar (matches the live clock)', () => {
+  const { r } = run();
+  assert.equal(r.byDay[0].day, 1);
+  assert.ok(r.byDay[0].byCh.email > 0, 'day 1 = launch day in Moscow time');
+  assert.equal(Object.keys(r.byDay[5].byCh).length, 0, 'day 6 is a Saturday: nothing is sent');
+});
+
+test('link detection ignores e-mail addresses and dotted words', () => {
+  assert.equal(Engine.hasLink('write to alex@relay.io please'), false);
+  assert.equal(Engine.hasLink('Relay.Company is great'), false);
+  assert.equal(Engine.hasLink('see relay.app/case'), true);
+  assert.equal(Engine.hasLink('https://x.y/z?c=1'), true);
+});

@@ -87,10 +87,12 @@ function LaunchFx() {
   </div>`;
 }
 
+/** The live region is always in the DOM so screen readers announce toasts inserted into it. */
 function Toast() {
   const x = state.ui.toast;
+  if (!x) return '<div class="toast-wrap" role="status" aria-live="polite" data-key="toast-region"></div>';
   const ic = x.ic || (x.kind === 'error' || x.kind === 'warn' ? 'alert' : x.kind === 'reply' ? 'reply' : 'check-circle');
-  return `<div class="toast-wrap" aria-live="polite"><div class="${cls('toast', `toast-${x.kind}`)}" data-key="toast-${x.id}" data-testid="toast">${icon(ic)}<span>${x.text}</span><button class="toast-x" data-action="closeToast" aria-label="${t('common.close')}">${icon('x')}</button></div></div>`;
+  return `<div class="toast-wrap" role="status" aria-live="polite" data-key="toast-region"><div class="${cls('toast', `toast-${x.kind}`)}" data-key="toast-${x.id}" data-testid="toast">${icon(ic)}<span>${x.text}</span><button class="toast-x" data-action="closeToast" aria-label="${t('common.close')}">${icon('x')}</button></div></div>`;
 }
 
 function EventsDrawer() {

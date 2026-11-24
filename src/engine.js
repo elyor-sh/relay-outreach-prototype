@@ -31,6 +31,9 @@ const Engine = (() => {
   const MESSENGERS = ['whatsapp', 'telegram', 'signal'];
   const CASCADE_DEFAULT = ['whatsapp', 'telegram', 'signal', 'sms'];
 
+  /** Typing-simulation delay multipliers. */
+  const TYPING_SPEED = { slow: 1.6, human: 1, fast: 0.5 };
+
   /** Relative likelihood that a message gets read, per channel. */
   const READ_FACTOR = { email: 1, linkedin: 0.9, whatsapp: 1.25, telegram: 1.2, signal: 1.2, sms: 1.1 };
   /** Relative likelihood of a human reply, per channel. */
@@ -110,7 +113,9 @@ const Engine = (() => {
     return { encoding: gsm ? 'GSM-7' : 'UCS-2', length, perSegment: single, segments };
   }
 
-  const LINK_SRC = '(?:https?:\\/\\/|www\\.)\\S+|\\b[a-z0-9][a-z0-9-]*\\.(?:com|io|ru|app|co|net|org|me|ai|dev)(?:\\/\\S*)?';
+  // A URL, or a bare domain with a known TLD. The look-behind keeps e-mail
+  // addresses (alex@relay.io) and dotted words (Relay.Company) from matching.
+  const LINK_SRC = '(?:https?:\\/\\/|www\\.)[^\\s<]+|(?<![@\\w.-])[a-z0-9][a-z0-9-]*\\.(?:com|io|ru|app|co|net|org|me|ai|dev)\\b(?:\\/[^\\s<]*)?';
   const LINK_TEST = new RegExp(LINK_SRC, 'i');
   const hasLink = (text) => LINK_TEST.test(String(text || ''));
   const findLinks = (text) => String(text || '').match(new RegExp(LINK_SRC, 'gi')) || [];
@@ -190,7 +195,8 @@ const Engine = (() => {
   /**
    * Run the whole campaign and return its full event timeline.
    * @param {object} campaign  {leads, steps, rules, channels}
-   * @param {{seed?:number,startT?:number}} [opts]
+   * @param {{seed?:number,startT?:number,replyText?:(intent:string,variant:number,channel:string)=>string}} [opts]
+   *        replyText lets the engine match inbound text against the campaign stop words.
    */
   function simulate(campaign, opts = {}) {
     const seed = (opts.seed ?? 42) >>> 0;
@@ -239,11 +245,12 @@ const Engine = (() => {
       S.set(lead.id, {
         stopped: false, bounced: false, unsub: false, connected: false, invited: false,
         touches: 0, oooSent: false, msgFirst: Object.create(null), hist: Object.create(null), attempts: Object.create(null),
+        pending: new Set(steps.map((s) => s.id)), // steps not yet resolved (sent / skipped) for this lead
       });
       for (const step of steps) {
         const t = nominalTime(step, lead, i);
         push({ t, kind: 'step', lead, step });
-        if (step.channel === 'linkedin' && step.kind !== 'message' && CH.linkedin.likeWarmup) {
+        if (step.channel === 'linkedin' && step.kind !== 'message' && (CH.linkedin.likeWarmup || CH.linkedin.viewProfile)) {
           const lt = Math.max(startT + i * STAGGER, t - (CH.linkedin.warmupDays || 0) * DAY - 120);
           push({ t: lt, kind: 'like', lead, step });
         }
@@ -269,10 +276,16 @@ const Engine = (() => {
       }
     }
 
+    /** SMS and calls follow the phone-code timezone only when tz-by-code is on; otherwise sender time. */
+    function tzFor(lead, channel) {
+      return (channel === 'sms' || channel === 'call') && CH.sms.tzByCode === false ? SENDER_TZ : lead.tz;
+    }
+
     function checkCondition(step, st) {
       if (!step.condition || step.condition === 'no_reply' || !step.ref) return { ok: true };
       const h = st.hist[step.ref];
-      if (!h) return { ok: false, reason: 'ref_not_sent' };
+      // The referenced step may itself be delayed (limits, weekend): wait for it instead of skipping.
+      if (!h) return st.pending.has(step.ref) ? { ok: false, wait: true } : { ok: false, reason: 'ref_not_sent' };
       switch (step.condition) {
         case 'opened': return h.opened ? { ok: true } : { ok: false, reason: 'not_opened' };
         case 'not_opened': return !h.opened ? { ok: true } : { ok: false, reason: 'opened' };
@@ -372,25 +385,34 @@ const Engine = (() => {
         push({ ...job, t: nextWindow(job.t, lead.tz, rules) + rand(5, 60) });
         return;
       }
-      emit(job.t, lead, 'like', { channel: 'linkedin', step: job.step.id });
+      if (CH.linkedin.viewProfile) emit(job.t, lead, 'view', { channel: 'linkedin', step: job.step.id });
+      if (CH.linkedin.likeWarmup) emit(job.t + 1, lead, 'like', { channel: 'linkedin', step: job.step.id });
     }
 
     function onStep(job, st) {
       const { lead, step } = job;
 
       // 1) Branching condition — evaluated once, at the nominal time of the step.
+      const resolve = () => st.pending.delete(step.id);
       if (!job.checked) {
         const verdict = checkCondition(step, st);
+        // Re-check twice a day for up to 3 weeks (the campaign horizon), then give up.
+        if (verdict.wait && (job.waits || 0) < 42) {
+          push({ ...job, t: job.t + DAY / 2, waits: (job.waits || 0) + 1 });
+          return;
+        }
         if (!verdict.ok) {
-          emit(job.t, lead, 'skip', { step: step.id, channel: step.channel, reason: verdict.reason, ref: step.ref });
+          emit(job.t, lead, 'skip', { step: step.id, channel: step.channel, reason: verdict.reason || 'ref_not_sent', ref: step.ref });
+          resolve();
           return;
         }
         job.checked = true;
       }
 
-      // 2) Working hours in the recipient's timezone.
-      if (!inWindow(job.t, lead.tz, rules)) {
-        const until = nextWindow(job.t, lead.tz, rules) + rand(4, 45);
+      // 2) Working hours in the recipient's timezone (sender time for SMS/calls if tz-by-code is off).
+      const tz = tzFor(lead, step.channel);
+      if (!inWindow(job.t, tz, rules)) {
+        const until = nextWindow(job.t, tz, rules) + rand(4, 45);
         const info = localInfo(job.t, lead.tz);
         emit(job.t, lead, 'deferred', {
           step: step.id, channel: step.channel, until, local: info.min,
@@ -405,20 +427,23 @@ const Engine = (() => {
       let tried = null;
       if (channel === 'messenger') {
         const found = cascadeOrder.find((c) => reachable(lead, c, st));
-        if (!found) { emit(job.t, lead, 'no_channel', { step: step.id, channel: 'messenger' }); return; }
+        if (!found) { emit(job.t, lead, 'no_channel', { step: step.id, channel: 'messenger' }); resolve(); return; }
         const pos = cascadeOrder.indexOf(found);
         if (pos > 0) tried = cascadeOrder.slice(0, pos);
         channel = found;
       } else if (!reachable(lead, channel, st)) {
         emit(job.t, lead, 'skip', { step: step.id, channel, reason: channel === 'email' && st.bounced ? 'bounced' : 'no_contact' });
+        resolve();
         return;
       }
       if (channel === 'linkedin' && step.kind === 'message' && !st.connected) {
         emit(job.t, lead, 'skip', { step: step.id, channel, reason: 'not_connected' });
+        resolve();
         return;
       }
       if (channel === 'linkedin' && step.kind !== 'message' && st.invited) {
         emit(job.t, lead, 'skip', { step: step.id, channel, reason: 'already_invited' });
+        resolve();
         return;
       }
 
@@ -426,7 +451,7 @@ const Engine = (() => {
       const res = acquire(channel, step, job.t, lead);
       if (!res) {
         const day = Math.floor(job.t / DAY);
-        const until = nextWindow((day + 1) * DAY, lead.tz, rules) + rand(4, 60);
+        const until = nextWindow((day + 1) * DAY, tz, rules) + rand(4, 60);
         emit(job.t, lead, 'limit', { step: step.id, channel, until });
         push({ ...job, t: until });
         return;
@@ -434,8 +459,10 @@ const Engine = (() => {
       if (tried) emit(job.t, lead, 'cascade', { step: step.id, channel, tried });
       if (res.rotatedFrom) emit(job.t, lead, 'rotation', { step: step.id, channel, from: res.rotatedFrom, to: res.label });
       st.touches++;
+      resolve();
+      const offHours = !inWindow(job.t, lead.tz, rules); // only possible when tz-by-code is off
 
-      if (channel === 'call') { onCall(job, st, res); return; }
+      if (channel === 'call') { onCall(job, st, res, offHours); return; }
 
       // 5) Messenger safety: links in the first message, typing, rich media.
       const isMsgr = MESSENGERS.includes(channel);
@@ -443,9 +470,9 @@ const Engine = (() => {
       const linkStripped = isMsgr && !st.msgFirst[channel] && link && !!CH[channel].noLinksFirst;
       emit(job.t, lead, 'send', {
         step: step.id, channel, via: res.label, kind: step.kind || 'message',
-        typing: isMsgr && CH[channel].typing ? rand(3, 12) : 0,
+        typing: isMsgr && CH[channel].typing ? Math.max(1, Math.round(rand(3, 12) * (TYPING_SPEED[CH[channel].typingSpeed] || 1))) : 0,
         media: isMsgr ? richMedia(channel) : null,
-        linkStripped, local: localInfo(job.t, lead.tz).min,
+        linkStripped, offHours, local: localInfo(job.t, lead.tz).min,
       });
       if (linkStripped) emit(job.t, lead, 'link_stripped', { step: step.id, channel });
       st.msgFirst[channel] = true;
@@ -463,9 +490,13 @@ const Engine = (() => {
         return;
       }
       const isInvite = channel === 'linkedin' && step.kind !== 'message';
-      if (isInvite && R() < P.accept) push({ t: t + rand(90, 2200), kind: 'outcome', type: 'accepted', lead, step });
+      // A like and a profile view before the invite make the name familiar.
+      const acceptP = clamp01(P.accept * (CH.linkedin.likeWarmup ? 1.15 : 1) * (CH.linkedin.viewProfile ? 1.08 : 1));
+      if (isInvite && R() < acceptP) push({ t: t + rand(90, 2200), kind: 'outcome', type: 'accepted', lead, step });
 
-      const reads = !isInvite && R() < clamp01(P.open * (READ_FACTOR[channel] || 1));
+      // HTML emails land in "Promotions" more often than plain text.
+      const formatFactor = channel === 'email' && !CH.email.plainText ? 0.88 : 1;
+      const reads = !isInvite && R() < clamp01(P.open * (READ_FACTOR[channel] || 1) * formatFactor);
       const readT = t + rand(6, 540);
       if (reads) {
         const observable = channel === 'email' ? !!CH.email.trackOpens : MESSENGERS.includes(channel) || channel === 'linkedin';
@@ -488,12 +519,12 @@ const Engine = (() => {
       }
     }
 
-    function onCall(job, st, res) {
+    function onCall(job, st, res, offHours) {
       const { lead, step } = job;
       const C = CH.call;
       const P = lead.persona;
       const attempt = (st.attempts[step.id] = (st.attempts[step.id] || 0) + 1);
-      emit(job.t, lead, 'call', { step: step.id, channel: 'call', via: res.label, localNumber: !!C.localPresence, attempt });
+      emit(job.t, lead, 'call', { step: step.id, channel: 'call', via: res.label, localNumber: !!C.localPresence, attempt, offHours });
       st.hist[step.id] = { channel: 'call', t: job.t, opened: false, clicked: false, link: false };
 
       // Local caller ID noticeably lifts the pickup rate.
@@ -515,14 +546,25 @@ const Engine = (() => {
         }
         emit(job.t + 1, lead, 'amd', { step: step.id, channel: 'call', action: C.amdAction });
         if (C.amdAction === 'retry' && attempt < C.maxAttempts) {
-          push({ ...job, t: job.t + DAY + rand(-40, 40), checked: true });
+          push({ ...job, t: job.t + DAY + rand(-40, 40), checked: true, retry: true });
         } else if (C.amdAction === 'sms' && reachable(lead, 'sms', st)) {
-          emit(job.t + 2, lead, 'send', { step: step.id, channel: 'sms', via: CH.sms.senderId, kind: 'call_followup', local: localInfo(job.t, lead.tz).min });
+          // The follow-up SMS goes through the same daily SMS quota as any other SMS.
+          const sms = acquire('sms', step, job.t, lead);
+          if (sms) emit(job.t + 2, lead, 'send', { step: step.id, channel: 'sms', via: sms.label, kind: 'call_followup', local: localInfo(job.t, lead.tz).min });
         }
         return;
       }
       emit(job.t + 1, lead, 'no_answer', { step: step.id, channel: 'call', attempt });
-      if (attempt < C.maxAttempts) push({ ...job, t: job.t + rand(180, 300), checked: true });
+      if (attempt < C.maxAttempts) push({ ...job, t: job.t + rand(180, 300), checked: true, retry: true });
+    }
+
+    /** Which campaign stop word (if any) the inbound text contains. */
+    function stopWordIn(intent, variant, channel) {
+      const words = (CH.sms.stopWords || []).map((w) => String(w).trim().toLowerCase()).filter(Boolean);
+      if (!words.length || channel === 'call') return null;
+      if (!opts.replyText) return intent === 'stop' ? words[0] : null; // headless callers without texts
+      const text = String(opts.replyText(intent, variant, channel) || '').toLowerCase();
+      return words.find((w) => text.includes(w)) || null;
     }
 
     function stopLead(t, lead, st, reason, channel) {
@@ -531,7 +573,7 @@ const Engine = (() => {
       for (let i = queue.length - 1; i >= 0; i--) {
         const j = queue[i];
         if (j.lead.id === lead.id && j.kind !== 'outcome') {
-          if (j.kind === 'step') cancelled++;
+          if (j.kind === 'step' && !j.retry) cancelled++; // a call retry is not a separate step
           queue.splice(i, 1);
         }
       }
@@ -565,8 +607,10 @@ const Engine = (() => {
         case 'reply': {
           if (st.stopped) break;
           const intent = job.intent || lead.persona.intent;
-          emit(job.t, lead, 'reply', { step: step.id, channel: job.channel, intent, variant: lead.persona.variant || 0 });
-          if (intent === 'stop') { st.unsub = true; emit(job.t, lead, 'unsubscribe', { channel: job.channel }); }
+          const variant = lead.persona.variant || 0;
+          emit(job.t, lead, 'reply', { step: step.id, channel: job.channel, intent, variant });
+          const word = stopWordIn(intent, variant, job.channel);
+          if (word) { st.unsub = true; emit(job.t, lead, 'unsubscribe', { channel: job.channel, word }); }
           if (job.meeting) emit(job.t + 1, lead, 'meeting', { channel: job.channel, manager: CH.call.transferTo });
           stopLead(job.t, lead, st, 'reply', job.channel);
           break;
@@ -591,25 +635,28 @@ const Engine = (() => {
   /** Aggregate the raw timeline into forecast-friendly structures. */
   function summarize({ seed, startT, events, steps, usage, leads }) {
     events.sort((a, b) => a.t - b.t || a.seq - b.seq);
-    const startDay = Math.floor(startT / DAY);
+    // Days are counted in the sender's calendar — the same "Day N" the track and live clock show.
+    const senderDay = (t) => Math.floor((t + SENDER_TZ * 60) / DAY);
+    const startDay = senderDay(startT);
     const lastT = events.length ? events[events.length - 1].t : startT;
     const endT = Math.max(lastT + 30, startT + DAY);
-    const days = Math.max(1, Math.floor(endT / DAY) - startDay + 1);
+    const days = Math.max(1, senderDay(endT) - startDay + 1);
     const byDay = Array.from({ length: days }, (_, d) => ({ day: d + 1, byCh: {}, sends: 0, deferred: 0, limit: 0, replies: 0 }));
     const stepStats = {};
     for (const s of steps) stepStats[s.id] = { sent: 0, skipped: 0, deferred: 0, limit: 0 };
     const stats = {
       leads: leads.length, sends: 0, contacted: 0, opens: 0, clicks: 0, humanReplies: 0, positive: 0,
       deferred: 0, night: 0, weekend: 0, limit: 0, cascades: 0, stripped: 0, stops: 0, cancelled: 0,
-      skips: 0, bounces: 0, meetings: 0, amd: 0, unsub: 0, autoReplies: 0, rotations: 0,
+      skips: 0, bounces: 0, meetings: 0, amd: 0, unsub: 0, autoReplies: 0, rotations: 0, offHours: 0,
     };
     const contacted = new Set();
     for (const e of events) {
-      const d = byDay[Math.floor(e.t / DAY) - startDay];
+      const d = byDay[senderDay(e.t) - startDay];
       const ss = e.step ? stepStats[e.step] : null;
       switch (e.type) {
         case 'send': case 'call':
           stats.sends++; contacted.add(e.lead);
+          if (e.offHours) stats.offHours++;
           if (d) { d.sends++; d.byCh[e.channel] = (d.byCh[e.channel] || 0) + 1; }
           if (ss && e.kind !== 'call_followup' && !(e.type === 'call' && e.attempt > 1)) ss.sent++;
           break;
